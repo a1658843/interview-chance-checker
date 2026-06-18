@@ -15,6 +15,10 @@ type ListSectionProps = {
 };
 
 function ListSection({ title, icon: Icon, items }: ListSectionProps) {
+  if (items.length === 0) {
+    return null;
+  }
+
   return (
     <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <div className="flex items-center gap-2">
@@ -68,28 +72,30 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
       ) : null}
       <ScoreCard result={result} />
       <div className="grid gap-4 lg:grid-cols-2">
-        <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2">
-            <CheckCircle2 className="h-5 w-5 text-cyan-700" />
-            <h3 className="text-base font-semibold text-slate-950">Strong Matches</h3>
-          </div>
-          <div className="mt-4 space-y-5">
-            {result.strongMatches.map((match) => (
-              <div key={match.label}>
-                <p className="text-sm font-semibold text-slate-800">{match.label}</p>
-                <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence</p>
-                <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-700">
-                  {match.evidence.map((item) => (
-                    <li key={item} className="flex gap-2">
-                      <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-700" />
-                      <span>{item}</span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            ))}
-          </div>
-        </article>
+        {result.strongMatches.length > 0 ? (
+          <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+            <div className="flex items-center gap-2">
+              <CheckCircle2 className="h-5 w-5 text-cyan-700" />
+              <h3 className="text-base font-semibold text-slate-950">Strong Matches</h3>
+            </div>
+            <div className="mt-4 space-y-5">
+              {result.strongMatches.map((match) => (
+                <div key={match.label}>
+                  <p className="text-sm font-semibold text-slate-800">{match.label}</p>
+                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence</p>
+                  <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-700">
+                    {match.evidence.map((item) => (
+                      <li key={item} className="flex gap-2">
+                        <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-700" />
+                        <span>{item}</span>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </article>
+        ) : null}
         <ListSection title="Critical Gaps" icon={TriangleAlert} items={result.criticalGaps} />
         <ListSection title="Specialized Gaps" icon={TriangleAlert} items={result.specializedGaps} />
         <ListSection title="Missing Skills" icon={Search} items={result.missingSkills} />
