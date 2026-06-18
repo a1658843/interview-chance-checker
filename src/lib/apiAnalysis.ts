@@ -14,6 +14,7 @@ type ApiAnalysisResult = {
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
   strongMatches?: unknown;
+  specialFlags?: unknown;
   criticalGaps?: unknown;
   specializedGaps?: unknown;
   missingSkills?: unknown;
@@ -110,6 +111,7 @@ export async function analyzeWithApi(
     estimatedInterviewChance: text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable'),
     marketCompetition: marketCompetition(data.marketCompetition),
     strongMatches: strongMatches(data.strongMatches),
+    specialFlags: stringArray(data.specialFlags),
     criticalGaps: stringArray(data.criticalGaps),
     specializedGaps: stringArray(data.specializedGaps),
     missingSkills: stringArray(data.missingSkills),

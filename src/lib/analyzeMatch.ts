@@ -1210,6 +1210,7 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     recommendation,
     estimatedInterviewChance,
     marketCompetition: marketContext.marketCompetition,
+    specialFlags: [],
     strongMatches:
       strongMatches.length > 0
         ? strongMatches

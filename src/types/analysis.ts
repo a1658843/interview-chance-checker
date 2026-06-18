@@ -13,6 +13,7 @@ export type AnalysisResult = {
   estimatedInterviewChance: string;
   marketCompetition: MarketCompetition;
   strongMatches: StrongMatch[];
+  specialFlags: string[];
   criticalGaps: string[];
   specializedGaps: string[];
   missingSkills: string[];

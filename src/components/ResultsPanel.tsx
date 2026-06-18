@@ -96,6 +96,7 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
             </div>
           </article>
         ) : null}
+        <ListSection title="Special Flags" icon={TriangleAlert} items={result.specialFlags} />
         <ListSection title="Critical Gaps" icon={TriangleAlert} items={result.criticalGaps} />
         <ListSection title="Specialized Gaps" icon={TriangleAlert} items={result.specializedGaps} />
         <ListSection title="Missing Skills" icon={Search} items={result.missingSkills} />
