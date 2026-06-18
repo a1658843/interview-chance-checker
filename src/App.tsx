@@ -1,0 +1,123 @@
+import { useState } from 'react';
+import { ArrowRight, RotateCcw, Target } from 'lucide-react';
+import { TextInputPanel } from './components/TextInputPanel';
+import { ResultsPanel } from './components/ResultsPanel';
+import { analyzeMatch } from './lib/analyzeMatch';
+import { analyzeWithApi } from './lib/apiAnalysis';
+import { jobDescriptionLooksLikeResume } from './lib/validation';
+import type { AnalysisResult } from './types/analysis';
+
+function App() {
+  const [resumeText, setResumeText] = useState('');
+  const [jobDescriptionText, setJobDescriptionText] = useState('');
+  const [result, setResult] = useState<AnalysisResult | null>(null);
+  const [inputError, setInputError] = useState<string | null>(null);
+  const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+
+  const canAnalyze = resumeText.trim().length > 0 && jobDescriptionText.trim().length > 0 && !isAnalyzing;
+
+  async function handleAnalyze() {
+    if (!canAnalyze) {
+      return;
+    }
+
+    if (jobDescriptionLooksLikeResume(jobDescriptionText)) {
+      setResult(null);
+      setInputError('The Job Description field appears to contain resume content instead of a job posting.');
+      return;
+    }
+
+    setInputError(null);
+    setAnalysisWarning(null);
+    setIsAnalyzing(true);
+
+    try {
+      setResult(await analyzeWithApi(resumeText, jobDescriptionText));
+    } catch {
+      setResult(analyzeMatch(resumeText, jobDescriptionText));
+      setAnalysisWarning('LLM analysis is unavailable right now, so this result uses the local heuristic fallback.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  }
+
+  function handleReset() {
+    setResumeText('');
+    setJobDescriptionText('');
+    setResult(null);
+    setInputError(null);
+    setAnalysisWarning(null);
+    setIsAnalyzing(false);
+  }
+
+  return (
+    <main className="min-h-screen bg-[#f5f7fb]">
+      <div className="mx-auto flex w-full max-w-7xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8">
+        <header className="flex flex-col gap-5 border-b border-slate-200 pb-6 lg:flex-row lg:items-end lg:justify-between">
+          <div className="max-w-3xl">
+            <div className="flex items-center gap-3">
+              <span className="inline-flex h-10 w-10 items-center justify-center rounded-lg bg-cyan-700 text-white shadow-sm">
+                <Target className="h-5 w-5" />
+              </span>
+              <h1 className="text-3xl font-bold tracking-tight text-slate-950 sm:text-4xl">
+                Interview Chance Checker
+              </h1>
+            </div>
+            <p className="mt-3 text-base leading-7 text-slate-600 sm:text-lg">
+              Check how well a resume fits a specific software engineering job.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <button
+              type="button"
+              onClick={handleReset}
+              className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-300 bg-white px-4 text-sm font-semibold text-slate-700 shadow-sm transition hover:bg-slate-100"
+            >
+              <RotateCcw className="h-4 w-4" />
+              Reset
+            </button>
+            <button
+              type="button"
+              onClick={handleAnalyze}
+              disabled={!canAnalyze}
+              className="inline-flex h-11 items-center gap-2 rounded-md bg-cyan-700 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:bg-slate-300"
+            >
+              {isAnalyzing ? 'Analyzing...' : 'Check Fit'}
+              <ArrowRight className="h-4 w-4" />
+            </button>
+          </div>
+        </header>
+
+        <section className="grid gap-4 lg:grid-cols-2">
+          <TextInputPanel
+            label="Resume Text"
+            helper="Paste the resume content as plain text."
+            placeholder="Paste resume text here..."
+            value={resumeText}
+            onChange={(value) => {
+              setResumeText(value);
+              setInputError(null);
+              setAnalysisWarning(null);
+            }}
+          />
+          <TextInputPanel
+            label="Job Description"
+            helper="Paste the exact job description for the target role."
+            placeholder="Paste job description here..."
+            value={jobDescriptionText}
+            onChange={(value) => {
+              setJobDescriptionText(value);
+              setInputError(null);
+              setAnalysisWarning(null);
+            }}
+          />
+        </section>
+
+        <ResultsPanel result={result} inputError={inputError} analysisWarning={analysisWarning} />
+      </div>
+    </main>
+  );
+}
+
+export default App;
