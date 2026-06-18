@@ -7,8 +7,10 @@ type ApiStrongMatch = {
 };
 
 type ApiAnalysisResult = {
+  fitScore?: unknown;
   jobFitScore?: unknown;
   recommendation?: unknown;
+  interviewChance?: unknown;
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
   strongMatches?: unknown;
@@ -20,6 +22,7 @@ type ApiAnalysisResult = {
   competitionFactors?: unknown;
   recruiterConcerns?: unknown;
   topImprovements?: unknown;
+  shortReasoning?: unknown;
   reasoning?: unknown;
 };
 
@@ -95,11 +98,16 @@ export async function analyzeWithApi(
   }
 
   const data = (await response.json()) as ApiAnalysisResult;
+  const apiScore = data.fitScore ?? data.jobFitScore;
+
+  if (typeof apiScore !== 'number') {
+    throw new Error('Analysis API returned a test response instead of an analysis result');
+  }
 
   return {
-    jobFitScore: score(data.jobFitScore),
+    jobFitScore: score(apiScore),
     recommendation: recommendation(data.recommendation),
-    estimatedInterviewChance: text(data.estimatedInterviewChance, 'Unavailable'),
+    estimatedInterviewChance: text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable'),
     marketCompetition: marketCompetition(data.marketCompetition),
     strongMatches: strongMatches(data.strongMatches),
     criticalGaps: stringArray(data.criticalGaps),
@@ -110,6 +118,9 @@ export async function analyzeWithApi(
     competitionFactors: stringArray(data.competitionFactors),
     recruiterConcerns: stringArray(data.recruiterConcerns),
     resumeImprovements: stringArray(data.topImprovements),
-    reasoning: text(data.reasoning, 'The analysis completed, but no reasoning was returned.'),
+    reasoning: text(
+      data.shortReasoning ?? data.reasoning,
+      'The analysis completed, but no reasoning was returned.',
+    ),
   };
 }
