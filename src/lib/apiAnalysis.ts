@@ -1,9 +1,8 @@
-import { clampScore } from './scoring';
-import type { AnalysisResult, MarketCompetition, Recommendation, StrongMatch } from '../types/analysis';
+import { clampScore, getRecommendation } from './scoring';
+import type { AnalysisResult, EffortLevel, MarketCompetition, StrongMatch } from '../types/analysis';
 
 type ApiStrongMatch = {
   label?: unknown;
-  evidence?: unknown;
 };
 
 type ApiAnalysisResult = {
@@ -13,22 +12,33 @@ type ApiAnalysisResult = {
   interviewChance?: unknown;
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
+  jobLogistics?: unknown;
   strongMatches?: unknown;
-  specialFlags?: unknown;
+  applicationRequirements?: unknown;
+  effortLevel?: unknown;
   criticalGaps?: unknown;
   specializedGaps?: unknown;
   missingSkills?: unknown;
   missingSignals?: unknown;
   whyChanceIsNotHigher?: unknown;
   competitionFactors?: unknown;
-  recruiterConcerns?: unknown;
   topImprovements?: unknown;
   shortReasoning?: unknown;
   reasoning?: unknown;
 };
 
-const recommendations: Recommendation[] = ['Strong Apply', 'Apply', 'Stretch', 'Skip'];
 const marketCompetitionLevels: MarketCompetition[] = ['Low', 'Medium', 'High', 'Very High'];
+const effortLevelValues: EffortLevel[] = ['Low', 'Medium', 'High', 'Very High'];
+const allowedApplicationRequirements = new Set([
+  'Coding Challenge Required',
+  'Take-home Project Required',
+  'Video Submission Required',
+  'Portfolio Required',
+  'Multi-hour Assessment Required',
+  'Work Sample Required',
+  'Extra Platform Registration Required',
+  'Onsite Interview Required',
+]);
 
 function stringArray(value: unknown) {
   if (!Array.isArray(value)) {
@@ -45,26 +55,62 @@ function strongMatches(value: unknown): StrongMatch[] {
 
   return value
     .map((match): StrongMatch | null => {
+      if (typeof match === 'string' && match.trim().length > 0) {
+        return { label: match.trim() };
+      }
+
       const apiMatch = match as ApiStrongMatch;
       if (typeof apiMatch.label !== 'string') {
         return null;
       }
 
-      const evidence = stringArray(apiMatch.evidence);
-      if (evidence.length === 0) {
-        return null;
-      }
-
       return {
-        label: apiMatch.label,
-        evidence,
+        label: apiMatch.label.trim(),
       };
     })
-    .filter((match): match is StrongMatch => Boolean(match));
+    .filter((match): match is StrongMatch => Boolean(match))
+    .slice(0, 5);
 }
 
-function recommendation(value: unknown): Recommendation {
-  return recommendations.includes(value as Recommendation) ? (value as Recommendation) : 'Skip';
+function applicationRequirements(value: unknown) {
+  return stringArray(value).filter((item) => allowedApplicationRequirements.has(item));
+}
+
+function effortLevel(value: unknown, requirements: string[]): EffortLevel {
+  if (effortLevelValues.includes(value as EffortLevel)) {
+    return value as EffortLevel;
+  }
+
+  const majorSteps = requirements.filter((requirement) =>
+    [
+      'Coding Challenge Required',
+      'Take-home Project Required',
+      'Multi-hour Assessment Required',
+      'Video Submission Required',
+      'Work Sample Required',
+    ].includes(requirement),
+  );
+
+  if (
+    requirements.includes('Multi-hour Assessment Required') ||
+    (requirements.includes('Coding Challenge Required') && requirements.includes('Video Submission Required')) ||
+    majorSteps.length >= 2
+  ) {
+    return 'Very High';
+  }
+
+  if (
+    requirements.includes('Coding Challenge Required') ||
+    requirements.includes('Take-home Project Required')
+  ) {
+    return 'High';
+  }
+
+  if (requirements.length > 0) {
+    return 'Medium';
+  }
+
+  return 'Low';
 }
 
 function marketCompetition(value: unknown): MarketCompetition {
@@ -105,20 +151,25 @@ export async function analyzeWithApi(
     throw new Error('Analysis API returned a test response instead of an analysis result');
   }
 
+  const mappedApplicationRequirements = applicationRequirements(data.applicationRequirements);
+  const mappedEffortLevel = effortLevel(data.effortLevel, mappedApplicationRequirements);
+  const mappedScore = score(apiScore);
+
   return {
-    jobFitScore: score(apiScore),
-    recommendation: recommendation(data.recommendation),
+    jobFitScore: mappedScore,
+    recommendation: getRecommendation(mappedScore, mappedEffortLevel),
     estimatedInterviewChance: text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable'),
     marketCompetition: marketCompetition(data.marketCompetition),
+    jobLogistics: text(data.jobLogistics, 'Not specified'),
     strongMatches: strongMatches(data.strongMatches),
-    specialFlags: stringArray(data.specialFlags),
+    applicationRequirements: mappedApplicationRequirements,
+    effortLevel: mappedEffortLevel,
     criticalGaps: stringArray(data.criticalGaps),
     specializedGaps: stringArray(data.specializedGaps),
     missingSkills: stringArray(data.missingSkills),
     missingSignals: stringArray(data.missingSignals),
     chanceReasons: stringArray(data.whyChanceIsNotHigher),
     competitionFactors: stringArray(data.competitionFactors),
-    recruiterConcerns: stringArray(data.recruiterConcerns),
     resumeImprovements: stringArray(data.topImprovements),
     reasoning: text(
       data.shortReasoning ?? data.reasoning,

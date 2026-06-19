@@ -1,19 +1,31 @@
-import type { Recommendation } from '../types/analysis';
+import type { EffortLevel, Recommendation } from '../types/analysis';
 
-export function getRecommendation(score: number): Recommendation {
+export function getRecommendation(score: number, effortLevel: EffortLevel = 'Low'): Recommendation {
   if (score >= 8) {
-    return 'Strong Apply';
+    return 'Strong Apply ✅';
+  }
+
+  if (score >= 7) {
+    if (effortLevel === 'High' || effortLevel === 'Very High') {
+      return 'Borderline ⚠️';
+    }
+
+    return 'Apply ✅';
   }
 
   if (score >= 6) {
-    return 'Apply';
+    if (effortLevel === 'Low') {
+      return 'Apply ✅';
+    }
+
+    return 'Borderline ⚠️';
   }
 
   if (score >= 4) {
-    return 'Stretch';
+    return 'Skip ❌';
   }
 
-  return 'Skip';
+  return 'Hard Skip ❌❌';
 }
 
 export function clampScore(score: number) {

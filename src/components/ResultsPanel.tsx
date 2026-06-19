@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, ListChecks, Search, Sparkles, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, CircleAlert, type LucideIcon, Sparkles, TriangleAlert } from 'lucide-react';
 import type { AnalysisResult } from '../types/analysis';
 import { ScoreCard } from './ScoreCard';
 
@@ -10,7 +10,7 @@ type ResultsPanelProps = {
 
 type ListSectionProps = {
   title: string;
-  icon: typeof Search;
+  icon: LucideIcon;
   items: string[];
 };
 
@@ -71,6 +71,10 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
         </article>
       ) : null}
       <ScoreCard result={result} />
+      <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
+        <h3 className="text-base font-semibold text-slate-950">Short Reasoning</h3>
+        <p className="mt-3 text-sm leading-6 text-slate-700">{result.reasoning}</p>
+      </article>
       <div className="grid gap-4 lg:grid-cols-2">
         {result.strongMatches.length > 0 ? (
           <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
@@ -78,38 +82,18 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
               <CheckCircle2 className="h-5 w-5 text-cyan-700" />
               <h3 className="text-base font-semibold text-slate-950">Strong Matches</h3>
             </div>
-            <div className="mt-4 space-y-5">
-              {result.strongMatches.map((match) => (
-                <div key={match.label}>
-                  <p className="text-sm font-semibold text-slate-800">{match.label}</p>
-                  <p className="mt-2 text-xs font-semibold uppercase tracking-wide text-slate-500">Evidence</p>
-                  <ul className="mt-2 space-y-2 text-sm leading-6 text-slate-700">
-                    {match.evidence.map((item) => (
-                      <li key={item} className="flex gap-2">
-                        <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-700" />
-                        <span>{item}</span>
-                      </li>
-                    ))}
-                  </ul>
-                </div>
+            <ul className="mt-4 space-y-3 text-sm leading-6 text-slate-700">
+              {result.strongMatches.slice(0, 5).map((match) => (
+                <li key={match.label} className="flex gap-2">
+                  <span className="mt-2 h-1.5 w-1.5 shrink-0 rounded-full bg-cyan-700" />
+                  <span>{match.label}</span>
+                </li>
               ))}
-            </div>
+            </ul>
           </article>
         ) : null}
-        <ListSection title="Special Flags" icon={TriangleAlert} items={result.specialFlags} />
         <ListSection title="Critical Gaps" icon={TriangleAlert} items={result.criticalGaps} />
-        <ListSection title="Specialized Gaps" icon={TriangleAlert} items={result.specializedGaps} />
-        <ListSection title="Missing Skills" icon={Search} items={result.missingSkills} />
-        <ListSection title="Missing Signals" icon={TriangleAlert} items={result.missingSignals} />
-        <ListSection title="Why Interview Chance Is Not Higher" icon={CircleAlert} items={result.chanceReasons} />
-        <ListSection title="Competition Factors" icon={CheckCircle2} items={result.competitionFactors} />
-        <ListSection title="Recruiter Concerns" icon={CircleAlert} items={result.recruiterConcerns} />
-        <ListSection title="Top 3 Resume Improvements" icon={ListChecks} items={result.resumeImprovements} />
       </div>
-      <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
-        <h3 className="text-base font-semibold text-slate-950">Short Reasoning</h3>
-        <p className="mt-3 text-sm leading-6 text-slate-700">{result.reasoning}</p>
-      </article>
     </section>
   );
 }

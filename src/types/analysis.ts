@@ -1,10 +1,11 @@
-export type Recommendation = 'Strong Apply' | 'Apply' | 'Stretch' | 'Skip';
+export type Recommendation = 'Strong Apply ✅' | 'Apply ✅' | 'Borderline ⚠️' | 'Skip ❌' | 'Hard Skip ❌❌';
 
 export type MarketCompetition = 'Low' | 'Medium' | 'High' | 'Very High';
 
+export type EffortLevel = 'Low' | 'Medium' | 'High' | 'Very High';
+
 export type StrongMatch = {
   label: string;
-  evidence: string[];
 };
 
 export type AnalysisResult = {
@@ -12,15 +13,16 @@ export type AnalysisResult = {
   recommendation: Recommendation;
   estimatedInterviewChance: string;
   marketCompetition: MarketCompetition;
+  jobLogistics: string;
   strongMatches: StrongMatch[];
-  specialFlags: string[];
+  applicationRequirements: string[];
+  effortLevel: EffortLevel;
   criticalGaps: string[];
   specializedGaps: string[];
   missingSkills: string[];
   missingSignals: string[];
   chanceReasons: string[];
   competitionFactors: string[];
-  recruiterConcerns: string[];
   resumeImprovements: string[];
   reasoning: string;
 };

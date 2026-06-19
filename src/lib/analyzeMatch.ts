@@ -1102,7 +1102,7 @@ function getStrongMatches(matches: SkillMatch[], roleTypes: RoleType[]): StrongM
       return !(roleTypes.includes('Implementation engineer') && frontendOnly);
     })
     .sort((a, b) => getStrongMatchPriority(a.signal.label, roleTypes) - getStrongMatchPriority(b.signal.label, roleTypes))
-    .map((item) => ({ label: item.signal.label, evidence: item.evidence }))
+    .map((item) => ({ label: item.signal.label }))
     .slice(0, 5);
 }
 
@@ -1156,7 +1156,7 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     platformIdentityGaps.length,
   );
   const score = scoreCap === null ? uncappedScore : Math.min(uncappedScore, scoreCap);
-  const recommendation = specializedGaps.length > 0 || platformIdentityGaps.length > 0 ? 'Skip' : getRecommendation(score);
+  const recommendation = getRecommendation(score);
   const marketContext = getMarketContext(normalizedJob, seniorityFitScore);
   const estimatedInterviewChance = getEstimatedInterviewChance(score, marketContext.marketCompetition);
 
@@ -1210,18 +1210,16 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     recommendation,
     estimatedInterviewChance,
     marketCompetition: marketContext.marketCompetition,
-    specialFlags: [],
-    strongMatches:
-      strongMatches.length > 0
-        ? strongMatches
-        : [{ label: 'No strong evidence-backed matches detected', evidence: ['Add more specific resume bullets for this role'] }],
-    criticalGaps: criticalGaps.length ? criticalGaps : ['No critical gaps detected from the current text'],
+    jobLogistics: 'Not specified',
+    strongMatches,
+    applicationRequirements: [],
+    effortLevel: 'Low',
+    criticalGaps,
     specializedGaps: specializedGaps.length ? specializedGaps : ['No specialized platform/domain gaps detected from the current text'],
     missingSkills: missingSkills.length ? missingSkills : ['No major missing technologies detected from the current text'],
     missingSignals: missingSignals.length ? missingSignals : ['No major missing experience patterns detected from the current text'],
     chanceReasons: marketContext.chanceReasons,
     competitionFactors: marketContext.factors,
-    recruiterConcerns: concerns.length ? concerns : ['No major recruiter concerns detected for this first-pass MVP'],
     resumeImprovements: [
       'Add concrete evidence bullets for the most important required skills.',
       'Quantify implementation, integration, backend, or database outcomes where possible.',

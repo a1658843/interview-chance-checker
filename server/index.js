@@ -1,6 +1,11 @@
 import 'dotenv/config';
 import http from 'node:http';
 import OpenAI from 'openai';
+import {
+  allowedApplicationRequirements,
+  applyApplicationRequirements,
+  effortLevels,
+} from './applicationRequirements.js';
 
 const port = Number(process.env.API_PORT ?? 8787);
 const model = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
@@ -14,10 +19,11 @@ const analysisSchema = {
     'recommendation',
     'interviewChance',
     'marketCompetition',
+    'jobLogistics',
     'strongMatches',
-    'specialFlags',
+    'applicationRequirements',
+    'effortLevel',
     'criticalGaps',
-    'recruiterConcerns',
     'shortReasoning',
   ],
   properties: {
@@ -26,11 +32,11 @@ const analysisSchema = {
       minimum: 0,
       maximum: 10,
       description:
-        'Resume-to-job fit score from 0.0 to 10.0, heavily penalizing missing core technology, platform, domain, or seniority requirements.',
+        "Kevin's application-worthiness score from 0.0 to 10.0: whether he should realistically spend time applying, not strict ATS keyword fit.",
     },
     recommendation: {
       type: 'string',
-      enum: ['Strong Apply', 'Apply', 'Stretch', 'Skip'],
+      enum: ['Strong Apply ✅', 'Apply ✅', 'Borderline ⚠️', 'Skip ❌', 'Hard Skip ❌❌'],
     },
     interviewChance: {
       type: 'string',
@@ -40,56 +46,34 @@ const analysisSchema = {
       type: 'string',
       enum: ['Low', 'Medium', 'High', 'Very High'],
     },
+    jobLogistics: {
+      type: 'string',
+      description:
+        'Concrete job logistics only, such as Remote · Full-time · Easy Apply or Hybrid · Contract · External Apply · Travel required.',
+    },
     strongMatches: {
       type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        required: ['label', 'evidence'],
-        properties: {
-          label: { type: 'string' },
-          evidence: {
-            type: 'array',
-            items: { type: 'string' },
-          },
-        },
-      },
-    },
-    specialFlags: {
-      type: 'array',
-      description:
-        'Concise recruiter-focused flags for unusual application requirements or material apply/no-apply constraints.',
+      maxItems: 5,
       items: {
         type: 'string',
-        enum: [
-          'Coding Challenge Required',
-          'Take-Home Assignment',
-          'Video Submission Required',
-          'Portfolio Required',
-          'Security Clearance Required',
-          'US Citizen Required',
-          'Green Card Required',
-          'Relocation Required',
-          'Onsite Interview Required',
-          'Travel Required',
-          'On-Call Rotation',
-          'Contract Position',
-          'Commission-Based Compensation',
-          'Sponsorship Not Available',
-          'Hybrid Role',
-          'Fully Onsite',
-          'Seniority Mismatch',
-          'Domain-Specific Experience Required',
-          'Must Have Existing Experience With Specific Platform',
-          'Must Have Existing BPM Platform Experience',
-        ],
       },
     },
-    criticalGaps: {
+    applicationRequirements: {
       type: 'array',
-      items: { type: 'string' },
+      description:
+        'Explicit extra application steps only. Do not include skill gaps, years of experience, seniority mismatch, domain requirements, cloud, AI/LLM, platform requirements, travel, authorization, sponsorship, or security clearance.',
+      items: {
+        type: 'string',
+        enum: allowedApplicationRequirements,
+      },
     },
-    recruiterConcerns: {
+    effortLevel: {
+      type: 'string',
+      enum: effortLevels,
+      description:
+        'Application effort level: Low for resume-only standard applications, Medium for custom questions or one light extra step, High for an assessment, coding challenge, or take-home project, and Very High for coding challenge plus video submission or multiple major extra steps.',
+    },
+    criticalGaps: {
       type: 'array',
       items: { type: 'string' },
     },
@@ -107,24 +91,38 @@ Compare a resume to a software engineering job description.
 Return only the JSON fields required by the schema.
 
 Rules:
-- fitScore measures resume-to-job-description fit only, from 0.0 to 10.0.
-- Heavily penalize seniority mismatch. Generic technical overlap must not lift the score above the correct band when required years or seniority are missing.
-- Score 0.0-2.0 when core technology, platform, domain, or seniority requirements are missing. Examples: JD requires 10+ years and candidate has less than 3 years; JD requires iOS and candidate has no iOS experience; JD requires Flowable or Camunda and candidate has none.
-- Score 3.0-4.0 when there is partial technical overlap but major required experience is missing.
-- Score 5.0-6.0 when there is reasonable overlap with some important gaps.
-- Score 7.0-8.0 when there is strong overlap across role type, skills, and experience level.
-- Score 9.0-10.0 only for a direct match across skills, experience level, seniority, and domain.
-- recommendation must follow: 8.0-10.0 Strong Apply, 6.0-7.9 Apply, 4.0-5.9 Stretch, 0.0-3.9 Skip. If fitScore is under 6.0, recommendation must not be Apply.
+- This app is not an ATS keyword checker and is not deciding whether the company should hire Kevin.
+- The core question is: should Kevin realistically spend time applying to this job?
+- fitScore should measure Kevin's fit for the role. Final recommendation should additionally account for application effort and expected interview return per hour spent.
+- Always evaluate the actual resume against the actual job description. Never hardcode a score or recommendation from the job title, company, category, or example name alone.
+- Treat a role as a hard blocker only when the JD requires core experience and Kevin's resume lacks that core experience. If Kevin has strong evidence for the core platform/language/domain, score it as a potential fit even if the role category is specialized.
+- Do not treat every missing JD requirement equally. Distinguish hard blockers from learnable gaps.
+- Hard blockers should heavily reduce fitScore: iOS role with no Swift/iOS experience; Android role with no Android/Kotlin experience; Flowable/Camunda/BPM role with no BPM experience; Edifecs/EDI role with no EDI experience; Java-only role with no Java experience; 10+ or 15+ years required when Kevin has less than 2 years; security clearance required and Kevin lacks it; fully onsite or relocation required when Kevin needs remote.
+- Learnable gaps should reduce fitScore moderately, not catastrophically: healthcare domain, HIPAA, cloud platform, GraphQL, some AI/LLM application experience, 3+ years required when Kevin has around 1-2 years and otherwise matches the core stack, and preferred domain experience.
+- Score 9.0-10.0 for excellent fits worth extra application effort such as coding challenge, take-home, video submission, networking, or custom materials.
+- Score 7.0-8.9 for good fits worth a normal application, even if there are learnable gaps.
+- Score 6.0-6.9 for borderline roles with meaningful gaps where Kevin should apply only if especially interested.
+- Score 4.0-5.9 for low expected return on application time.
+- Score 0.0-3.9 for major mismatch where Kevin should not spend time applying.
+- recommendation must optimize for interview return per hour spent, using both fitScore and effortLevel. Fit 4.0-5.9 should usually be "Skip ❌", especially with high effort. Fit 6.0-6.9 with Low effort can be "Apply ✅", but with Very High effort should usually be "Borderline ⚠️". Fit 8.0+ should usually be "Strong Apply ✅" even with Very High effort.
+- The following examples are illustrative calibration anchors only. Do not hardcode decisions from these names or categories; always re-evaluate the actual resume and JD.
+- Curana-like calibration: Python backend + Software Engineer II + remote + AI application role, but missing healthcare, LLM depth, and 3+ years, should usually score around 7.0-8.0 and recommend Apply because it is plausibly worth Kevin applying.
+- iOS calibration: Swift/iOS required and Kevin has none should score around 0.5-2.0 and recommend Hard Skip; Swift/iOS required and Kevin has strong Swift/iOS evidence may be Apply or Strong Apply.
+- EDI/Edifecs calibration: Java + Edifecs + EDI X12 + payer domain required and Kevin has none should score around 1.0-3.0 and recommend Hard Skip; strong evidence in those requirements should raise the score.
+- AHEAD-like calibration: 4+ years, AI/LLM integration, AWS/cloud, GraphQL; Kevin matches Python/React/API but lacks seniority and AI/cloud depth, should usually score around 5.5-6.5 and recommend Skip or Borderline depending on wording.
+- PHP/Laravel challenge calibration: PHP/Laravel plus coding challenge/video; Kevin has a builder profile but lacks PHP/Laravel and may not want to spend time on the challenge, should usually score around 4.0-6.0 and recommend Skip unless fit is otherwise very high.
 - interviewChance is separate from fitScore. Estimate real-world interview odds using market factors like remote status, Easy Apply, applicant count, days since posted, required years, seniority mismatch, referrals/connections, and company competitiveness.
 - Keep interviewChance conservative. A strong fit can still be 2-6% or 3-8% if competition is very high.
+- jobLogistics must summarize only concrete facts from the JD: Remote/Hybrid/Onsite, Full-time/Contract/Internship, Easy Apply/External Apply/Challenge-based, and Travel if present. Use a compact format like "Remote · Full-time · Easy Apply". Do not include vague labels such as posting pressure, competition, or applicant pressure. If a fact is not stated, omit that part. If no logistics are stated, use "Not specified".
 - Do not over-credit generic backend experience for specialized roles such as iOS, Android, Salesforce, SAP, ServiceNow, Flowable, trading systems, embedded, quant, FPGA, healthcare legacy systems, or security clearance roles.
-- Every strong match must include concrete evidence from the resume. Do not invent evidence.
-- Critical gaps should emphasize missing core requirements, years mismatch, platform/domain mismatch, and specialized requirements.
-- specialFlags should identify unusual application requirements or material constraints that affect whether the candidate should apply, even when technical fit is good.
-- Add specialFlags for coding challenges, take-home assignments, video walkthrough/submission requirements, portfolio requirements, security clearance, citizenship or green card requirements, relocation, onsite interviews, travel, on-call rotation, contract work, commission-based compensation, sponsorship not available, hybrid or fully onsite roles, seniority mismatch, domain-specific experience requirements, and must-have existing experience with specific platforms.
-- If the JD mentions Flowable, Camunda, Activiti, BPMN, DMN, or workflow orchestration as required and the resume lacks it, include "Must Have Existing BPM Platform Experience".
-- If the JD requires a niche platform such as Salesforce, ServiceNow, SAP, Workday, Edifecs, iOS, Android, React Native, Flutter, FPGA, embedded C, or a similar named platform and the resume lacks it, include "Must Have Existing Experience With Specific Platform".
-- If the JD requires 5+ years, 8+ years, 10+ years, or 15+ years and the resume appears substantially below that level, include "Seniority Mismatch".
+- strongMatches must be concise keywords only, with a maximum of 5 items. Good examples: "Python", "React", "REST APIs", "Docker", "PostgreSQL". Do not include evidence bullets or long phrases.
+- applicationRequirements must include only explicit extra application steps that affect whether Kevin wants to spend time applying.
+- Allowed applicationRequirements values are: "Coding Challenge Required", "Take-home Project Required", "Video Submission Required", "Portfolio Required", "Multi-hour Assessment Required", "Work Sample Required", "Extra Platform Registration Required", and "Onsite Interview Required".
+- Only add applicationRequirements when the JD explicitly states the requirement. For example, "Complete the API Rate Limiter Challenge and record a short video walkthrough" should return "Coding Challenge Required" and "Video Submission Required".
+- Do not put skill, fit, seniority, years, platform, domain, technology, travel, work authorization, sponsorship, or security clearance requirements in applicationRequirements. Never include 4+ Years Required, Cloud Required, AI/LLM Required, Seniority Mismatch, Domain Experience Required, Must Have Existing Platform Experience, Travel Required, Security Clearance Required, US Work Authorization Required, or Sponsorship Not Available.
+- effortLevel must reflect application time cost: Low = resume only / standard application; Medium = resume plus custom application questions or one light extra step; High = assessment, coding challenge, or take-home project; Very High = coding challenge plus video submission or multiple major extra steps.
+- Company history such as "Built on a legacy of 40 years in the market" must not create any applicationRequirements.
+- Critical gaps should emphasize missing requirements over matched requirements: core requirements, years mismatch, platform/domain mismatch, and specialized requirements.
 - Ignore benefits, PTO, medical, dental, vision, 401k, compensation boilerplate, legal text, and generic company culture when determining fit.
 - Keep shortReasoning to one concise recruiter-style paragraph.
 `;
@@ -172,6 +170,45 @@ function getErrorMessage(error) {
   return 'Unknown OpenAI error';
 }
 
+function getWorkflowRecommendation(score, effortLevel = 'Low') {
+  if (score >= 8) {
+    return 'Strong Apply ✅';
+  }
+
+  if (score >= 7) {
+    if (effortLevel === 'High' || effortLevel === 'Very High') {
+      return 'Borderline ⚠️';
+    }
+
+    return 'Apply ✅';
+  }
+
+  if (score >= 6) {
+    if (effortLevel === 'Low') {
+      return 'Apply ✅';
+    }
+
+    return 'Borderline ⚠️';
+  }
+
+  if (score >= 4) {
+    return 'Skip ❌';
+  }
+
+  return 'Hard Skip ❌❌';
+}
+
+function normalizeRecommendation(analysis) {
+  if (typeof analysis?.fitScore !== 'number') {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    recommendation: getWorkflowRecommendation(analysis.fitScore, analysis.effortLevel),
+  };
+}
+
 async function analyzeWithOpenAI({ resumeText, jobDescriptionText }) {
   if (!openai) {
     throw new Error('OPENAI_API_KEY is missing. Add it to .env and restart npm run dev.');
@@ -181,6 +218,7 @@ async function analyzeWithOpenAI({ resumeText, jobDescriptionText }) {
 
   const response = await openai.responses.create({
     model,
+    temperature: 0,
     input: [
       {
         role: 'system',
@@ -208,6 +246,8 @@ async function analyzeWithOpenAI({ resumeText, jobDescriptionText }) {
   if (!outputText) {
     throw new Error('OpenAI returned an empty analysis response.');
   }
+
+  console.log('Raw OpenAI analysis JSON:', outputText);
 
   try {
     return JSON.parse(outputText);
@@ -266,7 +306,18 @@ const server = http.createServer(async (req, res) => {
   }
 
   try {
-    const analysis = await analyzeWithOpenAI({ resumeText, jobDescriptionText });
+    const rawAnalysis = await analyzeWithOpenAI({ resumeText, jobDescriptionText });
+    console.log(
+      'OpenAI applicationRequirements before post-processing:',
+      JSON.stringify(rawAnalysis.applicationRequirements ?? []),
+    );
+
+    const analysis = normalizeRecommendation(applyApplicationRequirements(rawAnalysis, jobDescriptionText));
+    console.log(
+      'API applicationRequirements after post-processing:',
+      JSON.stringify(analysis.applicationRequirements),
+    );
+
     sendJson(res, 200, analysis);
   } catch (error) {
     console.error('OpenAI analysis failed:', error);
