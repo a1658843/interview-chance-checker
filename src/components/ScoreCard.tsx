@@ -1,5 +1,4 @@
 import type { AnalysisResult } from '../types/analysis';
-import { TriangleAlert } from 'lucide-react';
 
 type ScoreCardProps = {
   result: AnalysisResult;
@@ -44,25 +43,6 @@ export function ScoreCard({ result }: ScoreCardProps) {
 
   return (
     <section className="space-y-3">
-      {result.applicationRequirements.length > 0 ? (
-        <article className="rounded-lg border border-amber-200 bg-white p-5 shadow-sm">
-          <div className="flex items-center gap-2">
-            <TriangleAlert className="h-5 w-5 text-amber-700" />
-            <h3 className="text-base font-semibold text-slate-950">Additional Application Steps Detected</h3>
-          </div>
-          <div className="mt-3 flex flex-wrap gap-2">
-            {result.applicationRequirements.map((requirement) => (
-              <span
-                key={requirement}
-                className="rounded-full border border-amber-200 bg-amber-50 px-3 py-1 text-xs font-semibold text-amber-900"
-              >
-                {requirement}
-              </span>
-            ))}
-          </div>
-        </article>
-      ) : null}
-
       <div className="grid gap-3 md:grid-cols-3">
         {decisionCards.map((card) => (
         <article key={card.label} className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">

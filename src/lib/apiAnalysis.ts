@@ -1,5 +1,12 @@
 import { clampScore, getRecommendation } from './scoring';
-import type { AnalysisResult, EffortLevel, MarketCompetition, StrongMatch } from '../types/analysis';
+import type {
+  AnalysisResult,
+  CompanyType,
+  EffortLevel,
+  MarketCompetition,
+  OpportunityQuality,
+  StrongMatch,
+} from '../types/analysis';
 
 type ApiStrongMatch = {
   label?: unknown;
@@ -13,6 +20,8 @@ type ApiAnalysisResult = {
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
   jobLogistics?: unknown;
+  companyType?: unknown;
+  opportunityQuality?: unknown;
   strongMatches?: unknown;
   applicationRequirements?: unknown;
   effortLevel?: unknown;
@@ -28,6 +37,8 @@ type ApiAnalysisResult = {
 };
 
 const marketCompetitionLevels: MarketCompetition[] = ['Low', 'Medium', 'High', 'Very High'];
+const companyTypes: CompanyType[] = ['Direct Employer', 'Staffing Agency', 'Consulting', 'Startup', 'Unknown'];
+const opportunityQualities: OpportunityQuality[] = ['High', 'Medium', 'Low'];
 const effortLevelValues: EffortLevel[] = ['Low', 'Medium', 'High', 'Very High'];
 const allowedApplicationRequirements = new Set([
   'Coding Challenge Required',
@@ -119,6 +130,14 @@ function marketCompetition(value: unknown): MarketCompetition {
     : 'Medium';
 }
 
+function companyType(value: unknown): CompanyType {
+  return companyTypes.includes(value as CompanyType) ? (value as CompanyType) : 'Unknown';
+}
+
+function opportunityQuality(value: unknown): OpportunityQuality {
+  return opportunityQualities.includes(value as OpportunityQuality) ? (value as OpportunityQuality) : 'Medium';
+}
+
 function score(value: unknown) {
   return typeof value === 'number' && Number.isFinite(value) ? clampScore(value) : 0;
 }
@@ -154,13 +173,24 @@ export async function analyzeWithApi(
   const mappedApplicationRequirements = applicationRequirements(data.applicationRequirements);
   const mappedEffortLevel = effortLevel(data.effortLevel, mappedApplicationRequirements);
   const mappedScore = score(apiScore);
+  const mappedCompanyType = companyType(data.companyType);
+  const mappedOpportunityQuality = opportunityQuality(data.opportunityQuality);
+  const mappedInterviewChance = text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable');
 
   return {
     jobFitScore: mappedScore,
-    recommendation: getRecommendation(mappedScore, mappedEffortLevel),
-    estimatedInterviewChance: text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable'),
+    recommendation: getRecommendation(mappedScore, {
+      applicationRequirements: mappedApplicationRequirements,
+      companyType: mappedCompanyType,
+      effortLevel: mappedEffortLevel,
+      interviewChance: mappedInterviewChance,
+      opportunityQuality: mappedOpportunityQuality,
+    }),
+    estimatedInterviewChance: mappedInterviewChance,
     marketCompetition: marketCompetition(data.marketCompetition),
     jobLogistics: text(data.jobLogistics, 'Not specified'),
+    companyType: mappedCompanyType,
+    opportunityQuality: mappedOpportunityQuality,
     strongMatches: strongMatches(data.strongMatches),
     applicationRequirements: mappedApplicationRequirements,
     effortLevel: mappedEffortLevel,

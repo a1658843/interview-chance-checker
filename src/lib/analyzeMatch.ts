@@ -1156,9 +1156,15 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     platformIdentityGaps.length,
   );
   const score = scoreCap === null ? uncappedScore : Math.min(uncappedScore, scoreCap);
-  const recommendation = getRecommendation(score);
   const marketContext = getMarketContext(normalizedJob, seniorityFitScore);
   const estimatedInterviewChance = getEstimatedInterviewChance(score, marketContext.marketCompetition);
+  const recommendation = getRecommendation(score, {
+    applicationRequirements: [],
+    companyType: 'Unknown',
+    effortLevel: 'Low',
+    interviewChance: estimatedInterviewChance,
+    opportunityQuality: 'Medium',
+  });
 
   const missingItems = missingRequired
     .filter((item) => !(learningFriendly && item.signal.categories.includes('language')))
@@ -1211,6 +1217,8 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     estimatedInterviewChance,
     marketCompetition: marketContext.marketCompetition,
     jobLogistics: 'Not specified',
+    companyType: 'Unknown',
+    opportunityQuality: 'Medium',
     strongMatches,
     applicationRequirements: [],
     effortLevel: 'Low',

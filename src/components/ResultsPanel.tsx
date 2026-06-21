@@ -71,6 +71,18 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
         </article>
       ) : null}
       <ScoreCard result={result} />
+      <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
+        <div className="grid gap-3 text-sm sm:grid-cols-2">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Company Type</p>
+            <p className="mt-1 font-semibold text-slate-800">{result.companyType}</p>
+          </div>
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Opportunity Quality</p>
+            <p className="mt-1 font-semibold text-slate-800">{result.opportunityQuality}</p>
+          </div>
+        </div>
+      </article>
       <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-semibold text-slate-950">Short Reasoning</h3>
         <p className="mt-3 text-sm leading-6 text-slate-700">{result.reasoning}</p>

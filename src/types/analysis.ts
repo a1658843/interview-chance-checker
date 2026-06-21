@@ -2,6 +2,10 @@ export type Recommendation = 'Strong Apply ✅' | 'Apply ✅' | 'Borderline ⚠�
 
 export type MarketCompetition = 'Low' | 'Medium' | 'High' | 'Very High';
 
+export type CompanyType = 'Direct Employer' | 'Staffing Agency' | 'Consulting' | 'Startup' | 'Unknown';
+
+export type OpportunityQuality = 'High' | 'Medium' | 'Low';
+
 export type EffortLevel = 'Low' | 'Medium' | 'High' | 'Very High';
 
 export type StrongMatch = {
@@ -14,6 +18,8 @@ export type AnalysisResult = {
   estimatedInterviewChance: string;
   marketCompetition: MarketCompetition;
   jobLogistics: string;
+  companyType: CompanyType;
+  opportunityQuality: OpportunityQuality;
   strongMatches: StrongMatch[];
   applicationRequirements: string[];
   effortLevel: EffortLevel;

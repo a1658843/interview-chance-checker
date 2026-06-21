@@ -6,6 +6,11 @@ import {
   applyApplicationRequirements,
   effortLevels,
 } from './applicationRequirements.js';
+import {
+  applyAnalysisGuardrails,
+  applyFinalConsistencyRepair,
+} from './analysisPostProcessing.js';
+import { normalizeStrongMatches } from './strongMatches.js';
 
 const port = Number(process.env.API_PORT ?? 8787);
 const model = process.env.OPENAI_MODEL ?? 'gpt-4.1-mini';
@@ -20,6 +25,8 @@ const analysisSchema = {
     'interviewChance',
     'marketCompetition',
     'jobLogistics',
+    'companyType',
+    'opportunityQuality',
     'strongMatches',
     'applicationRequirements',
     'effortLevel',
@@ -32,7 +39,7 @@ const analysisSchema = {
       minimum: 0,
       maximum: 10,
       description:
-        "Kevin's application-worthiness score from 0.0 to 10.0: whether he should realistically spend time applying, not strict ATS keyword fit.",
+        'Resume-to-role fit score from 0.0 to 10.0. Consider stack, responsibilities, seniority, and domain only; do not consider company type, opportunity quality, application effort, or application requirements.',
     },
     recommendation: {
       type: 'string',
@@ -40,7 +47,8 @@ const analysisSchema = {
     },
     interviewChance: {
       type: 'string',
-      description: 'Conservative real-world interview chance range, such as 3-8%.',
+      description:
+        'First-round recruiter or HR screener move-forward probability for this exact applicant pool. Use a realistic range such as <1%, 1-3%, 3-7%, 5-10%, 8-15%, 15-25%, or 25%+.',
     },
     marketCompetition: {
       type: 'string',
@@ -50,6 +58,18 @@ const analysisSchema = {
       type: 'string',
       description:
         'Concrete job logistics only, such as Remote · Full-time · Easy Apply or Hybrid · Contract · External Apply · Travel required.',
+    },
+    companyType: {
+      type: 'string',
+      enum: ['Direct Employer', 'Staffing Agency', 'Consulting', 'Startup', 'Unknown'],
+      description:
+        'Classify the employer/opportunity source. This must not change fitScore, interviewChance, or applicationRequirements, but it can inform the final recommendation.',
+    },
+    opportunityQuality: {
+      type: 'string',
+      enum: ['High', 'Medium', 'Low'],
+      description:
+        'Rate the clarity and quality of the hiring opportunity itself. This must not change fitScore, interviewChance, or applicationRequirements, but it can inform the final recommendation.',
     },
     strongMatches: {
       type: 'array',
@@ -91,38 +111,62 @@ Compare a resume to a software engineering job description.
 Return only the JSON fields required by the schema.
 
 Rules:
-- This app is not an ATS keyword checker and is not deciding whether the company should hire Kevin.
-- The core question is: should Kevin realistically spend time applying to this job?
-- fitScore should measure Kevin's fit for the role. Final recommendation should additionally account for application effort and expected interview return per hour spent.
+- This app is not an ATS keyword checker and is not deciding whether the company should hire the candidate.
+- The core question is: should the candidate realistically spend time applying to this job?
+- fitScore measures only the candidate's resume-to-role fit. Focus on stack, responsibilities, seniority, and domain. Do not include companyType, opportunityQuality, application effort, applicationRequirements, or company quality in fitScore.
+- recommendation is the final application decision. It should additionally account for application effort, companyType, opportunityQuality, and expected interview return per hour spent.
 - Always evaluate the actual resume against the actual job description. Never hardcode a score or recommendation from the job title, company, category, or example name alone.
-- Treat a role as a hard blocker only when the JD requires core experience and Kevin's resume lacks that core experience. If Kevin has strong evidence for the core platform/language/domain, score it as a potential fit even if the role category is specialized.
+- Estimate actual recruiter interest, not keyword completeness. Recruiters often interview candidates who match the core requirements even when several secondary or nice-to-have requirements are missing.
+- Core requirements should dominate scoring. First identify the job's primary technologies, primary responsibilities, required seniority, and strongest hiring signals. If the candidate matches most of those core requirements, start from a strong score and adjust from there.
+- Explicit hiring priorities should receive extra weight. Give significant scoring weight to requirements introduced by phrases such as "focused on 3 core things", "must-have skills", "bread and butter", "key qualifications", "primary responsibilities", "what you will do", "you will be responsible for", and "required qualifications".
+- Nice-to-have, preferred, bonus, plus, familiarity, exposure, or secondary skills should not heavily reduce fit. Missing bonus tools, optional frameworks, supporting technologies, or preferred-only domain experience should only make a small adjustment when the primary stack and responsibilities match.
+- Never put clearly preferred-only qualifications in criticalGaps. Preferred-only domain experience may be mentioned in shortReasoning as a learnable gap, but it should not pull a strong core-stack match below 8.0.
+- Distinguish core technology mismatch from secondary skill gaps. Missing the primary stack or primary responsibility is a major issue; missing a supporting tool is not.
+- Treat a role as a hard blocker only when the JD requires core experience and the candidate's resume lacks that core experience. If the candidate has strong evidence for the core platform/language/domain, score it as a potential fit even if the role category is specialized.
 - Do not treat every missing JD requirement equally. Distinguish hard blockers from learnable gaps.
-- Hard blockers should heavily reduce fitScore: iOS role with no Swift/iOS experience; Android role with no Android/Kotlin experience; Flowable/Camunda/BPM role with no BPM experience; Edifecs/EDI role with no EDI experience; Java-only role with no Java experience; 10+ or 15+ years required when Kevin has less than 2 years; security clearance required and Kevin lacks it; fully onsite or relocation required when Kevin needs remote.
-- Learnable gaps should reduce fitScore moderately, not catastrophically: healthcare domain, HIPAA, cloud platform, GraphQL, some AI/LLM application experience, 3+ years required when Kevin has around 1-2 years and otherwise matches the core stack, and preferred domain experience.
-- Score 9.0-10.0 for excellent fits worth extra application effort such as coding challenge, take-home, video submission, networking, or custom materials.
-- Score 7.0-8.9 for good fits worth a normal application, even if there are learnable gaps.
-- Score 6.0-6.9 for borderline roles with meaningful gaps where Kevin should apply only if especially interested.
+- Hard blockers should heavily reduce fitScore: iOS role with no Swift/iOS experience; Android role with no Android/Kotlin experience; Flowable/Camunda/BPM role with no BPM experience; Edifecs/EDI role with no EDI experience; Java-only role with no Java experience; 10+ or 15+ years required when the candidate has less than 2 years; security clearance required and the candidate lacks it; fully onsite or relocation required when the candidate needs remote.
+- Evaluate career level separately from technology fit. A junior candidate can match the stack well and still be a poor fit for Senior, Staff, Principal, Architect, Engineer IV, Engineer V, or 8+ year leadership roles.
+- Infer candidate level from explicit resume evidence: Junior = internships, academic projects, short contract work under about 2 years, and little ownership; Mid = 2-5 years or independent production feature delivery; Senior = 5+ years, architecture decisions, mentoring, or technical leadership; Staff = staff/principal/architect titles, organization-wide influence, or strategic architecture ownership.
+- Infer job level from title and responsibilities: Junior = junior, entry level, new grad, or 0-2 years; Mid = Engineer II/III or 2-5 years; Senior = Senior, Lead, Engineer IV, 5+ years, architecture ownership, mentoring, or technical leadership; Staff = Staff, Principal, Architect, Engineer V, 8+ years, approving code standards, lead architecture, organization-wide ownership, or strategic technical direction.
+- Apply career-level penalties after technical fit scoring. Typical penalties: Junior to Mid -0.5 to -1.0, Junior to Senior -2.0, Junior to Staff -3.0, Mid to Staff -2.0, Senior to Staff -1.0.
+- Career-level mismatch must cap recommendation realism. Junior to Senior should not exceed Borderline. Junior to Staff, Principal, Architect, or Engineer V should be Skip even when technology overlap is strong.
+- Never claim the candidate has, meets, satisfies, or demonstrates a years-of-experience requirement unless the resume explicitly states that amount of professional experience. Do not infer 4+ or 5+ years from internships, academic projects, bootcamp projects, short contract work, graduation dates, or general skill breadth.
+- If the JD requires a specific amount of professional experience and the resume does not explicitly demonstrate that amount, list the years requirement as a critical gap instead of saying the candidate meets it.
+- Learnable gaps should reduce fitScore moderately, not catastrophically: healthcare domain, HIPAA, cloud platform, GraphQL, some AI/LLM application experience, 3+ years required when the candidate has around 1-2 years and otherwise matches the core stack, and preferred domain experience.
+- Score 9.0-10.0 when the candidate directly matches the primary stack, primary responsibilities, seniority expectations, and domain/hiring priorities.
+- Score 8.0-9.0 when the candidate matches the primary stack and responsibilities but misses a few supporting tools, optional technologies, or nice-to-have skills.
+- Score 7.0-8.0 when the candidate is a strong plausible fit for the main work but has one or two meaningful, learnable gaps.
+- Score 6.0-7.0 when the candidate matches about half of the important requirements or has moderate overlap with the core work.
+- Score below 6.0 when the candidate lacks the primary stack, primary responsibility, required platform, required domain blocker, or required seniority.
 - Score 4.0-5.9 for low expected return on application time.
-- Score 0.0-3.9 for major mismatch where Kevin should not spend time applying.
-- recommendation must optimize for interview return per hour spent, using both fitScore and effortLevel. Fit 4.0-5.9 should usually be "Skip ❌", especially with high effort. Fit 6.0-6.9 with Low effort can be "Apply ✅", but with Very High effort should usually be "Borderline ⚠️". Fit 8.0+ should usually be "Strong Apply ✅" even with Very High effort.
+- Score 0.0-3.9 for major mismatch where the job seeker should not spend time applying.
+- recommendation must optimize for total application value, not fitScore alone. Consider fitScore, interviewChance, opportunityQuality, companyType, and applicationRequirements/effortLevel. A high fit score does not automatically mean "Strong Apply ✅". Fit >= 8.0 plus High opportunity quality should usually be "Strong Apply ✅" when interview chance and application effort are reasonable. Fit >= 8.0 plus Medium opportunity quality should usually be "Apply ✅". Fit >= 8.0 plus Low opportunity quality should be "Apply ✅", not "Strong Apply ✅". Fit 7.0-7.9 plus High or Medium opportunity quality should usually be "Apply ✅". Fit 7.0-7.9 plus Low opportunity quality should usually be "Borderline ⚠️". Fit 6.5 plus low effort and Direct Employer can be "Apply ✅". Fit below 6.0 should be "Skip ❌" unless there is a very unusual reason. Fit 5.5 should be "Skip ❌".
 - The following examples are illustrative calibration anchors only. Do not hardcode decisions from these names or categories; always re-evaluate the actual resume and JD.
-- Curana-like calibration: Python backend + Software Engineer II + remote + AI application role, but missing healthcare, LLM depth, and 3+ years, should usually score around 7.0-8.0 and recommend Apply because it is plausibly worth Kevin applying.
-- iOS calibration: Swift/iOS required and Kevin has none should score around 0.5-2.0 and recommend Hard Skip; Swift/iOS required and Kevin has strong Swift/iOS evidence may be Apply or Strong Apply.
-- EDI/Edifecs calibration: Java + Edifecs + EDI X12 + payer domain required and Kevin has none should score around 1.0-3.0 and recommend Hard Skip; strong evidence in those requirements should raise the score.
-- AHEAD-like calibration: 4+ years, AI/LLM integration, AWS/cloud, GraphQL; Kevin matches Python/React/API but lacks seniority and AI/cloud depth, should usually score around 5.5-6.5 and recommend Skip or Borderline depending on wording.
-- PHP/Laravel challenge calibration: PHP/Laravel plus coding challenge/video; Kevin has a builder profile but lacks PHP/Laravel and may not want to spend time on the challenge, should usually score around 4.0-6.0 and recommend Skip unless fit is otherwise very high.
-- interviewChance is separate from fitScore. Estimate real-world interview odds using market factors like remote status, Easy Apply, applicant count, days since posted, required years, seniority mismatch, referrals/connections, and company competitiveness.
-- Keep interviewChance conservative. A strong fit can still be 2-6% or 3-8% if competition is very high.
+- Curana-like calibration: Python backend + Software Engineer II + remote + AI application role, but missing healthcare, LLM depth, and 3+ years, should usually score around 7.0-8.0 and recommend Apply because it is plausibly worth the candidate applying.
+- Akkodis-like calibration: Python backend role where the core priorities are Python APIs and authentication; if the candidate directly matches the primary stack and responsibilities, missing AWS-specific services or optional domain experience should not heavily reduce fit and should usually score around 8.0-9.0.
+- iOS calibration: Swift/iOS required and the candidate has none should score around 0.5-2.0 and recommend Hard Skip; Swift/iOS required and the candidate has strong Swift/iOS evidence may be Apply or Strong Apply.
+- EDI/Edifecs calibration: Java + Edifecs + EDI X12 + payer domain required and the candidate has none should score around 1.0-3.0 and recommend Hard Skip; strong evidence in those requirements should raise the score.
+- AHEAD-like calibration: 4+ years, AI/LLM integration, AWS/cloud, GraphQL; the candidate matches Python/React/API but lacks seniority and AI/cloud depth, should usually score around 5.5-6.5 and recommend Skip or Borderline depending on wording.
+- PHP/Laravel challenge calibration: PHP/Laravel plus coding challenge/video; the candidate has a builder profile but lacks PHP/Laravel and may not want to spend time on the challenge, should usually score around 4.0-6.0 and recommend Skip unless fit is otherwise very high.
+- interviewChance is separate from fitScore. Do not simply convert fitScore into interviewChance.
+- For interviewChance, act as the first-round recruiter or HR screener for the company or hiring agency described in the JD. Ask: "If this resume came through my applicant pool for this exact role, how likely would I be to move this candidate to an interview?"
+- Estimate interviewChance from the screener's perspective using: core requirement match, obvious screening filters, years of experience, domain preference, remote/Easy Apply/applicant-volume competition, companyType, whether the JD is generic or specific, and whether the role appears to be a real active opening or a pipeline posting.
+- A high fitScore can still have a low interviewChance if the posting is remote, highly competitive, generic, staffing-agency sourced, pipeline-like, or domain-specific.
+- Return interviewChance as a realistic range, such as "<1%", "1-3%", "3-7%", "5-10%", "8-15%", "15-25%", or "25%+".
 - jobLogistics must summarize only concrete facts from the JD: Remote/Hybrid/Onsite, Full-time/Contract/Internship, Easy Apply/External Apply/Challenge-based, and Travel if present. Use a compact format like "Remote · Full-time · Easy Apply". Do not include vague labels such as posting pressure, competition, or applicant pressure. If a fact is not stated, omit that part. If no logistics are stated, use "Not specified".
+- companyType must not affect fitScore, interviewChance, or applicationRequirements. Use "Direct Employer" when the company appears to be hiring for its own product/team, "Staffing Agency" for recruiters/staffing vendors, "Consulting" for consulting/client-services firms, "Startup" for startup employers, and "Unknown" when unclear.
+- opportunityQuality must not affect fitScore, interviewChance, or applicationRequirements. Use only "High", "Medium", or "Low". Use "High" for direct employers with a clear real product or team, specific responsibilities, credible active hiring need, and strong opportunity quality. Use "Medium" for reasonable opportunities with some uncertainty, such as reputable staffing agencies with specific client/project details, direct employers with limited job detail, or hidden-client postings where the JD is specific enough. Use "Low" for generic staffing/recruiting posts, no specific product/team/client, talent-pipeline or future-talent language, vague entry-level JDs, unclear real openings, or generic remote Easy Apply postings with little concrete role detail.
+- shortReasoning must be consistent with recommendation. Never return "Strong Apply ✅" while saying "not a strong apply", "apply only if interested", "borderline", or similar. Never return "Skip ❌" while saying the role is worth prioritizing. The recommendation is the final application decision.
 - Do not over-credit generic backend experience for specialized roles such as iOS, Android, Salesforce, SAP, ServiceNow, Flowable, trading systems, embedded, quant, FPGA, healthcare legacy systems, or security clearance roles.
-- strongMatches must be concise keywords only, with a maximum of 5 items. Good examples: "Python", "React", "REST APIs", "Docker", "PostgreSQL". Do not include evidence bullets or long phrases.
-- applicationRequirements must include only explicit extra application steps that affect whether Kevin wants to spend time applying.
+- strongMatches must be concise keywords only, with a maximum of 5 items. Good examples: "Python", "React", "REST APIs", "Docker", "PostgreSQL". Do not include evidence bullets or long phrases. Strong matches must be an intersection of resume evidence and JD requirements. Do not include a skill just because it appears in the JD. Do not infer unlisted tools from related experience. If the resume does not explicitly show Node.js, Vue.js, AWS, Kubernetes, or Ruby on Rails, do not list those as strong matches.
+- Treat Authentication as a broader skill category when the JD asks for authentication, authorization, identity management, Microsoft Entra, Azure AD, B2C, Okta, Auth0, Cognito, Keycloak, SSO, OAuth, OIDC, or similar identity work and the resume shows concrete authentication implementation evidence such as JWT, authentication, authorization, RBAC, role-based access control, OAuth, OIDC, identity management, session management, SSO, secure login systems, or secure password hashing. Specific identity platforms should remain separate gaps if the resume lacks them.
+- applicationRequirements must include only explicit extra application steps that affect whether the job seeker wants to spend time applying.
 - Allowed applicationRequirements values are: "Coding Challenge Required", "Take-home Project Required", "Video Submission Required", "Portfolio Required", "Multi-hour Assessment Required", "Work Sample Required", "Extra Platform Registration Required", and "Onsite Interview Required".
 - Only add applicationRequirements when the JD explicitly states the requirement. For example, "Complete the API Rate Limiter Challenge and record a short video walkthrough" should return "Coding Challenge Required" and "Video Submission Required".
 - Do not put skill, fit, seniority, years, platform, domain, technology, travel, work authorization, sponsorship, or security clearance requirements in applicationRequirements. Never include 4+ Years Required, Cloud Required, AI/LLM Required, Seniority Mismatch, Domain Experience Required, Must Have Existing Platform Experience, Travel Required, Security Clearance Required, US Work Authorization Required, or Sponsorship Not Available.
 - effortLevel must reflect application time cost: Low = resume only / standard application; Medium = resume plus custom application questions or one light extra step; High = assessment, coding challenge, or take-home project; Very High = coding challenge plus video submission or multiple major extra steps.
 - Company history such as "Built on a legacy of 40 years in the market" must not create any applicationRequirements.
-- Critical gaps should emphasize missing requirements over matched requirements: core requirements, years mismatch, platform/domain mismatch, and specialized requirements.
+- Critical gaps should emphasize only the biggest required or decision-changing missing requirements: core technology mismatch, primary responsibility mismatch, years mismatch, platform/domain mismatch, and specialized requirements. Do not list every secondary, nice-to-have, preferred, bonus, plus, familiarity, or exposure gap.
 - Ignore benefits, PTO, medical, dental, vision, 401k, compensation boilerplate, legal text, and generic company culture when determining fit.
 - Keep shortReasoning to one concise recruiter-style paragraph.
 `;
@@ -170,32 +214,232 @@ function getErrorMessage(error) {
   return 'Unknown OpenAI error';
 }
 
-function getWorkflowRecommendation(score, effortLevel = 'Low') {
+function getInterviewChanceUpperBound(interviewChance) {
+  if (typeof interviewChance !== 'string' || interviewChance.length === 0) {
+    return null;
+  }
+
+  const matches = [...interviewChance.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  if (matches.length === 0) {
+    return interviewChance.includes('<') ? 1 : null;
+  }
+
+  return Math.max(...matches);
+}
+
+function getRecommendationRank(recommendation) {
+  const ranks = {
+    'Hard Skip ❌❌': 0,
+    'Skip ❌': 1,
+    'Borderline ⚠️': 2,
+    'Apply ✅': 3,
+    'Strong Apply ✅': 4,
+  };
+
+  return ranks[recommendation] ?? 0;
+}
+
+function capRecommendation(recommendation, cap) {
+  if (!cap) {
+    return recommendation;
+  }
+
+  return getRecommendationRank(recommendation) > getRecommendationRank(cap) ? cap : recommendation;
+}
+
+function getWorkflowRecommendation(analysis) {
+  const score = analysis.fitScore;
+  const effortLevel = analysis.effortLevel ?? 'Low';
+  const applicationRequirements = Array.isArray(analysis.applicationRequirements)
+    ? analysis.applicationRequirements
+    : [];
+  const companyType = analysis.companyType ?? 'Unknown';
+  const opportunityQuality = analysis.opportunityQuality ?? 'Medium';
+  const interviewChanceUpperBound = getInterviewChanceUpperBound(analysis.interviewChance);
+  const lowInterviewChance = interviewChanceUpperBound !== null && interviewChanceUpperBound <= 5;
+  const veryLowInterviewChance = interviewChanceUpperBound !== null && interviewChanceUpperBound <= 2;
+  const veryHighEffort =
+    effortLevel === 'Very High' ||
+    (applicationRequirements.includes('Coding Challenge Required') &&
+      applicationRequirements.includes('Video Submission Required')) ||
+    applicationRequirements.includes('Multi-hour Assessment Required');
+  const highEffort = effortLevel === 'High' || veryHighEffort;
+  const strongOpportunity = opportunityQuality === 'High';
+  const weakerOpportunity = opportunityQuality === 'Low';
+
+  let recommendation;
+
   if (score >= 8) {
-    return 'Strong Apply ✅';
+    if (veryHighEffort && lowInterviewChance) {
+      recommendation = score >= 8.5 ? 'Apply ✅' : 'Borderline ⚠️';
+      return capRecommendation(recommendation, analysis.recommendationCap);
+    }
+
+    if (weakerOpportunity) {
+      recommendation = 'Apply ✅';
+      return capRecommendation(recommendation, analysis.recommendationCap);
+    }
+
+    if (strongOpportunity) {
+      recommendation = 'Strong Apply ✅';
+      return capRecommendation(recommendation, analysis.recommendationCap);
+    }
+
+    recommendation = 'Apply ✅';
+    return capRecommendation(recommendation, analysis.recommendationCap);
   }
 
   if (score >= 7) {
-    if (effortLevel === 'High' || effortLevel === 'Very High') {
-      return 'Borderline ⚠️';
+    if ((highEffort && lowInterviewChance) || weakerOpportunity) {
+      recommendation = 'Borderline ⚠️';
+      return capRecommendation(recommendation, analysis.recommendationCap);
     }
 
-    return 'Apply ✅';
+    recommendation = 'Apply ✅';
+    return capRecommendation(recommendation, analysis.recommendationCap);
   }
 
   if (score >= 6) {
-    if (effortLevel === 'Low') {
-      return 'Apply ✅';
+    if ((effortLevel === 'Low' || effortLevel === 'Medium') && !veryLowInterviewChance) {
+      recommendation = 'Apply ✅';
+      return capRecommendation(recommendation, analysis.recommendationCap);
     }
 
-    return 'Borderline ⚠️';
+    recommendation = 'Borderline ⚠️';
+    return capRecommendation(recommendation, analysis.recommendationCap);
   }
 
   if (score >= 4) {
-    return 'Skip ❌';
+    recommendation = 'Skip ❌';
+    return capRecommendation(recommendation, analysis.recommendationCap);
   }
 
-  return 'Hard Skip ❌❌';
+  recommendation = 'Hard Skip ❌❌';
+  return capRecommendation(recommendation, analysis.recommendationCap);
+}
+
+function getDecisionPrefix(recommendation) {
+  if (recommendation === 'Strong Apply ✅') {
+    return 'Strong Apply because the fit and opportunity quality make this worth prioritizing.';
+  }
+
+  if (recommendation === 'Apply ✅') {
+    return 'Apply because the role is worthwhile, but the overall application value does not justify treating it as a top-priority strong apply.';
+  }
+
+  if (recommendation === 'Borderline ⚠️') {
+    return 'Borderline because the role may be worth applying to only if the candidate is especially interested.';
+  }
+
+  if (recommendation === 'Skip ❌') {
+    return 'Skip because the expected return on application time is low.';
+  }
+
+  return 'Hard Skip because the mismatch is too large to justify applying.';
+}
+
+function hasContradictoryReasoning(analysis) {
+  const reasoning = String(analysis.shortReasoning ?? '').toLowerCase();
+  const recommendation = analysis.recommendation;
+
+  if (!reasoning) {
+    return true;
+  }
+
+  if (recommendation === 'Strong Apply ✅') {
+    return [
+      'not a strong apply',
+      'not strong apply',
+      'apply only if',
+      'only if especially interested',
+      'borderline',
+      'skip',
+      'low expected return',
+      'not worth',
+    ].some((phrase) => reasoning.includes(phrase));
+  }
+
+  if (recommendation === 'Apply ✅') {
+    return [
+      'strong apply',
+      'skip',
+      'do not apply',
+      'not worth',
+      'only if especially interested',
+    ].some((phrase) => reasoning.includes(phrase));
+  }
+
+  if (recommendation === 'Borderline ⚠️') {
+    return [
+      'strong apply',
+      'worth prioritizing',
+      'skip',
+      'do not apply',
+    ].some((phrase) => reasoning.includes(phrase));
+  }
+
+  if (recommendation === 'Skip ❌' || recommendation === 'Hard Skip ❌❌') {
+    return [
+      'strong apply',
+      'worth prioritizing',
+      'apply normally',
+      'good fit and worth applying',
+      'excellent fit',
+    ].some((phrase) => reasoning.includes(phrase));
+  }
+
+  return false;
+}
+
+function getReasoningDetails(analysis) {
+  const details = [];
+  const fitScore = typeof analysis.fitScore === 'number' ? analysis.fitScore.toFixed(1) : null;
+
+  if (fitScore) {
+    details.push(`Fit score is ${fitScore}/10`);
+  }
+
+  if (analysis.interviewChance) {
+    details.push(`estimated interview chance is ${analysis.interviewChance}`);
+  }
+
+  if (analysis.companyType && analysis.opportunityQuality) {
+    details.push(`the opportunity is ${analysis.opportunityQuality.toLowerCase()} quality from a ${analysis.companyType.toLowerCase()}`);
+  }
+
+  if (Array.isArray(analysis.applicationRequirements) && analysis.applicationRequirements.length > 0) {
+    details.push(`extra application steps include ${analysis.applicationRequirements.join(', ')}`);
+  }
+
+  if (Array.isArray(analysis.criticalGaps) && analysis.criticalGaps.length > 0) {
+    details.push(`main gaps include ${analysis.criticalGaps.slice(0, 2).join(', ')}`);
+  }
+
+  if (details.length === 0) {
+    return '';
+  }
+
+  return ` ${details.join('; ')}.`;
+}
+
+function ensureOutputConsistency(analysis) {
+  if (!analysis || typeof analysis !== 'object') {
+    return analysis;
+  }
+
+  const consistentAnalysis = {
+    ...analysis,
+    recommendation: getWorkflowRecommendation(analysis),
+  };
+
+  if (!hasContradictoryReasoning(consistentAnalysis)) {
+    return consistentAnalysis;
+  }
+
+  return {
+    ...consistentAnalysis,
+    shortReasoning: `${getDecisionPrefix(consistentAnalysis.recommendation)}${getReasoningDetails(consistentAnalysis)}`,
+  };
 }
 
 function normalizeRecommendation(analysis) {
@@ -203,10 +447,7 @@ function normalizeRecommendation(analysis) {
     return analysis;
   }
 
-  return {
-    ...analysis,
-    recommendation: getWorkflowRecommendation(analysis.fitScore, analysis.effortLevel),
-  };
+  return ensureOutputConsistency(analysis);
 }
 
 async function analyzeWithOpenAI({ resumeText, jobDescriptionText }) {
@@ -312,7 +553,21 @@ const server = http.createServer(async (req, res) => {
       JSON.stringify(rawAnalysis.applicationRequirements ?? []),
     );
 
-    const analysis = normalizeRecommendation(applyApplicationRequirements(rawAnalysis, jobDescriptionText));
+    const analysisWithApplicationRequirements = applyApplicationRequirements(rawAnalysis, jobDescriptionText);
+    const analysisWithFilteredMatches = {
+      ...analysisWithApplicationRequirements,
+      strongMatches: normalizeStrongMatches(
+        analysisWithApplicationRequirements.strongMatches,
+        { resumeText, jobDescriptionText },
+      ),
+    };
+    const normalizedAnalysis = normalizeRecommendation(
+      applyAnalysisGuardrails(analysisWithFilteredMatches, { jobDescriptionText, resumeText }),
+    );
+    const analysis = applyFinalConsistencyRepair(normalizedAnalysis, {
+      jobDescriptionText,
+      resumeText,
+    });
     console.log(
       'API applicationRequirements after post-processing:',
       JSON.stringify(analysis.applicationRequirements),
