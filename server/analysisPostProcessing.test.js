@@ -6,7 +6,9 @@ import {
   applyFinalConsistencyRepair,
   applyOpportunityQualityGuardrails,
   getExplicitCandidateExperienceYears,
+  getRequiredEducationLevel,
   getRequiredExperienceYears,
+  getResumeEducationLevel,
   inferCandidateLevel,
   inferJobLevel,
   isPreferredOnlyGap,
@@ -14,7 +16,6 @@ import {
 } from './analysisPostProcessing.js';
 
 const APPLY = 'Apply \u2705';
-const BORDERLINE = 'Borderline \u26a0\ufe0f';
 const SKIP = 'Skip \u274c';
 const STRONG_APPLY = 'Strong Apply \u2705';
 
@@ -63,6 +64,94 @@ test('Suvoda-like direct employer role is recalibrated to high quality and stron
   assert.deepEqual(result.criticalGaps, []);
 });
 
+test('unsupported inferred years and seniority critical gaps are removed', () => {
+  const jd = `
+    Mercor is hiring a software engineer.
+    Requirements include Python, React, SQL, and API development.
+    Responsibilities include building backend APIs and user-facing features.
+  `;
+  const result = applyAnalysisGuardrails(
+    {
+      fitScore: 7,
+      companyType: 'Direct Employer',
+      opportunityQuality: 'Medium',
+      strongMatches: ['Python', 'React', 'SQL'],
+      criticalGaps: [
+        'Required 3+ years experience not demonstrated',
+        'Senior-level experience required',
+        'Python',
+      ],
+      shortReasoning: 'The candidate matches the stack but lacks required 3+ years experience.',
+    },
+    {
+      jobDescriptionText: jd,
+      resumeText: 'Python React SQL APIs',
+    },
+  );
+
+  assert.deepEqual(result.criticalGaps, ['Python']);
+});
+
+test('BravoTran-style soft technology interests are not critical gaps', () => {
+  const jd = `
+    BravoTran Software Engineer.
+    We value professional work, internships, open-source contributions, academic projects, and personal projects.
+    We hire at multiple levels depending on experience and care about the ability to learn quickly.
+    Knowledge of or interest in technologies such as Ruby on Rails, Sorbet, PostgreSQL, Elm, Redis, Machine Learning, AWS, and Kubernetes.
+  `;
+  const result = applyAnalysisGuardrails(
+    {
+      fitScore: 5.5,
+      recommendation: 'Skip \u274c',
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['Python', 'React', 'PostgreSQL'],
+      criticalGaps: [
+        'Ruby on Rails experience not demonstrated',
+        'Machine Learning experience not demonstrated',
+        'AWS and Kubernetes experience not demonstrated',
+      ],
+      shortReasoning:
+        'Skip because Ruby on Rails, Machine Learning, AWS, and Kubernetes are not demonstrated.',
+    },
+    {
+      jobDescriptionText: jd,
+      resumeText: 'Python React PostgreSQL academic projects and internship experience.',
+    },
+  );
+
+  assert.deepEqual(result.criticalGaps, []);
+  assert.equal(result.fitScore, 6.5);
+  assert.equal(result.interviewChance, '8-15%');
+  assert.equal(result.recommendationCap, undefined);
+});
+
+test('explicit years critical gaps are preserved when stated by the JD', () => {
+  const jd = `
+    Requirements
+    5+ years software development experience required.
+    Python and React experience required.
+  `;
+  const result = applyAnalysisGuardrails(
+    {
+      fitScore: 7,
+      companyType: 'Direct Employer',
+      opportunityQuality: 'Medium',
+      strongMatches: ['Python', 'React'],
+      criticalGaps: ['5+ years experience requirement not met'],
+      shortReasoning: 'The candidate matches the stack but does not meet the 5+ years requirement.',
+    },
+    {
+      jobDescriptionText: jd,
+      resumeText: 'Python React SQL APIs',
+    },
+  );
+
+  assert.ok(result.criticalGaps.some((gap) => /5\+ years experience requirement not met/i.test(gap)));
+});
+
 test('staffing agency without specific client or project detail is low quality', () => {
   const jd = `
     HTG is hiring a frontend developer for a client.
@@ -96,6 +185,79 @@ test('staffing agency with specific project detail can remain medium quality', (
   assert.equal(result.opportunityQuality, 'Medium');
 });
 
+test('Workerbee talent network is detected and interview chance is capped', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      interviewChance: '20-35%',
+    },
+    `
+      Workerbee Talent Network.
+      Join our network, build your profile, and get matched with future opportunities.
+      Companies may seek React, Python, AWS, and SQL engineers.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Talent Network');
+  assert.equal(result.opportunityQuality, 'Medium');
+  assert.equal(result.interviewChance, '3-7%');
+});
+
+test('Crossing Hurdles talent marketplace is detected as a talent network', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Unknown',
+      opportunityQuality: 'High',
+      interviewChance: '10-20%',
+    },
+    `
+      Crossing Hurdles candidate marketplace.
+      Create candidate account details to join our talent pool for future matching opportunities.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Talent Network');
+  assert.equal(result.opportunityQuality, 'Medium');
+  assert.equal(result.interviewChance, '3-7%');
+});
+
+test('stealth startup posting is detected as suspicious and interview chance is capped', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Startup',
+      opportunityQuality: 'High',
+      interviewChance: '20-35%',
+    },
+    `
+      Stealth Startup Software Engineer.
+      No company identity is available and the compensation is unusually high for minimal company information.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Suspicious Posting');
+  assert.equal(result.opportunityQuality, 'Medium');
+  assert.equal(result.interviewChance, '3-7%');
+});
+
+test('Dice-style recruiter posting is detected as staffing agency and interview chance is capped', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      interviewChance: '20-35%',
+    },
+    `
+      Dice recruiter posting for a client seeking a software engineer.
+      The client project includes API development and cloud deployment.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.opportunityQuality, 'Medium');
+  assert.equal(result.interviewChance, '5-10%');
+});
+
 test('short reasoning removes unsupported skill claims', () => {
   const result = sanitizeUnsupportedReasoningSkills(
     {
@@ -114,9 +276,9 @@ test('short reasoning removes unsupported skill claims', () => {
 
 test('final repair fixes low opportunity quality with stale medium wording', () => {
   const result = applyFinalConsistencyRepair(
-    {
-      fitScore: 7.4,
-      recommendation: BORDERLINE,
+      {
+        fitScore: 7.4,
+      recommendation: APPLY,
       interviewChance: '3-7%',
       companyType: 'Staffing Agency',
       opportunityQuality: 'Low',
@@ -158,11 +320,11 @@ test('final repair fixes staffing agency reasoning that implies direct employer'
   assert.equal(/company type|opportunity quality/i.test(result.shortReasoning), false);
 });
 
-test('final repair fixes borderline recommendation with top-priority wording', () => {
+test('final repair fixes Apply recommendation with top-priority wording', () => {
   const result = applyFinalConsistencyRepair(
-    {
-      fitScore: 7.2,
-      recommendation: BORDERLINE,
+      {
+        fitScore: 7.2,
+      recommendation: APPLY,
       interviewChance: '3-7%',
       companyType: 'Direct Employer',
       opportunityQuality: 'Medium',
@@ -309,7 +471,169 @@ test('extracts candidate years only when explicitly supported by resume text', (
   );
 });
 
-test('junior candidate against senior job is capped to borderline range', () => {
+test('extracts required and resume education levels from explicit degree evidence', () => {
+  assert.equal(getRequiredEducationLevel("Requirements: Bachelor's degree required."), 1);
+  assert.equal(getRequiredEducationLevel("Requirements: Master of Science degree required."), 2);
+  assert.equal(getRequiredEducationLevel('Requirements: PhD required.'), 3);
+  assert.equal(getResumeEducationLevel('Education: B.S. Computer Science'), 1);
+  assert.equal(getResumeEducationLevel('Education: M.S. Computer Science'), 2);
+  assert.equal(getResumeEducationLevel('Education: Ph.D. Computer Science'), 3);
+});
+
+test("bachelor's resume satisfies bachelor's degree requirement", () => {
+  const result = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.1,
+      recommendation: APPLY,
+      criticalGaps: [],
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: "Requirements: Bachelor's degree required.",
+    },
+  );
+
+  assert.equal(result.criticalGaps.some((gap) => /degree required/i.test(gap)), false);
+  assert.equal(result.educationGate, 'Pass');
+});
+
+test("bachelor's resume against master's required adds education gap and downgrades recommendation", () => {
+  const guarded = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.4,
+      recommendation: APPLY,
+      criticalGaps: [],
+      shortReasoning: 'The role is worth applying to based on stack overlap.',
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: "Requirements: Master's degree required.",
+    },
+  );
+  const repaired = applyFinalConsistencyRepair(
+    {
+      ...guarded,
+      recommendation: APPLY,
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['Python'],
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: "Requirements: Master's degree required.",
+    },
+  );
+
+  assert.ok(guarded.criticalGaps.some((gap) => /master'?s degree required/i.test(gap)));
+  assert.equal(guarded.fitScore, 6.5);
+  assert.equal(guarded.interviewChance, '1-2%');
+  assert.equal(repaired.recommendation.startsWith('Skip'), true);
+  assert.match(repaired.shortReasoning, /degree|education/i);
+});
+
+test("bachelor's resume against PhD required adds education gap and skips", () => {
+  const guarded = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.4,
+      recommendation: APPLY,
+      criticalGaps: [],
+      shortReasoning: 'The role is worth applying to based on stack overlap.',
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: 'Requirements: PhD required.',
+    },
+  );
+  const repaired = applyFinalConsistencyRepair(
+    {
+      ...guarded,
+      recommendation: APPLY,
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['Python'],
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: 'Requirements: PhD required.',
+    },
+  );
+
+  assert.ok(guarded.criticalGaps.some((gap) => /phd required|phd degree required/i.test(gap)));
+  assert.equal(guarded.fitScore, 3.9);
+  assert.equal(guarded.interviewChance, '<1%');
+  assert.equal(repaired.recommendation.startsWith('Hard Skip'), true);
+  assert.equal(repaired.fitScore, 3.9);
+  assert.equal(repaired.interviewChance, '<1%');
+  assert.match(repaired.shortReasoning, /degree|education/i);
+});
+
+test("master's resume against PhD required adds major education gap and skips", () => {
+  const guarded = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.4,
+      recommendation: APPLY,
+      criticalGaps: [],
+      shortReasoning: 'The role is worth applying to based on stack overlap.',
+    },
+    {
+      resumeText: 'Education: M.S. Computer Science.',
+      jobDescriptionText: 'Requirements: PhD required.',
+    },
+  );
+  const repaired = applyFinalConsistencyRepair(
+    {
+      ...guarded,
+      recommendation: APPLY,
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['Python'],
+    },
+    {
+      resumeText: 'Education: M.S. Computer Science.',
+      jobDescriptionText: 'Requirements: PhD required.',
+    },
+  );
+
+  assert.ok(guarded.criticalGaps.some((gap) => /phd required|phd degree required/i.test(gap)));
+  assert.equal(guarded.fitScore, 5.0);
+  assert.equal(guarded.interviewChance, '1-3%');
+  assert.equal(repaired.recommendation.startsWith('Skip'), true);
+  assert.equal(repaired.fitScore, 5.0);
+  assert.match(repaired.shortReasoning, /degree|education/i);
+});
+
+test('preferred advanced education is not treated as a critical gap', () => {
+  const mastersPreferred = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.1,
+      recommendation: APPLY,
+      criticalGaps: [],
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: "Bachelor's degree required. Master's degree preferred.",
+    },
+  );
+  const phdPreferred = applyCandidateJobLevelGuardrails(
+    {
+      fitScore: 8.1,
+      recommendation: APPLY,
+      criticalGaps: [],
+    },
+    {
+      resumeText: 'Education: B.S. Computer Science.',
+      jobDescriptionText: "Bachelor's degree required. PhD preferred.",
+    },
+  );
+
+  assert.equal(mastersPreferred.criticalGaps.some((gap) => /master|phd|degree required/i.test(gap)), false);
+  assert.equal(phdPreferred.criticalGaps.some((gap) => /master|phd|degree required/i.test(gap)), false);
+});
+
+test('junior candidate against senior job is capped to Skip', () => {
   const result = applyCandidateJobLevelGuardrails(
     {
       fitScore: 8.8,
@@ -515,7 +839,7 @@ test('Ladders-style Software Engineer V regression enforces severe level mismatc
   assert.ok(repaired.criticalGaps.some((gap) => /8\+ years experience requirement not met/i.test(gap)));
 });
 
-test('junior candidate against DriveTime-style 4+ year Azure LLM role is materially capped', () => {
+test('junior candidate against DriveTime-style 4+ year Azure LLM role is skipped', () => {
   const guarded = applyCandidateJobLevelGuardrails(
     {
       fitScore: 7.5,
@@ -552,7 +876,7 @@ test('junior candidate against DriveTime-style 4+ year Azure LLM role is materia
   assert.equal(guarded.jobLevel, 'Senior');
   assert.equal(guarded.levelGap, 'Large');
   assert.equal(repaired.fitScore, 5.5);
-  assert.equal(repaired.recommendation.startsWith('Borderline'), true);
+  assert.equal(repaired.recommendation.startsWith('Skip'), true);
   assert.equal(repaired.interviewChance, '1-3%');
   assert.match(repaired.shortReasoning, /experience|seniority/i);
   assert.ok(repaired.criticalGaps.some((gap) => /4\+ years experience requirement not met/i.test(gap)));
@@ -590,7 +914,7 @@ test('BEPC-style junior-friendly role does not trigger experience gate block', (
   assert.equal(repaired.criticalGaps.some((gap) => /2\+ years experience requirement not met/i.test(gap)), false);
 });
 
-test('junior candidate against 3-4 year mid role is capped to borderline', () => {
+test('junior candidate against explicit 3+ year mid role is skipped', () => {
   const guarded = applyCandidateJobLevelGuardrails(
     {
       fitScore: 8.4,
@@ -620,7 +944,7 @@ test('junior candidate against 3-4 year mid role is capped to borderline', () =>
   );
 
   assert.equal(repaired.fitScore, 7.5);
-  assert.equal(repaired.recommendation.startsWith('Borderline'), true);
+  assert.equal(repaired.recommendation.startsWith('Skip'), true);
 });
 
 test('large level mismatch final reasoning explicitly mentions experience-level mismatch', () => {
@@ -646,7 +970,7 @@ test('large level mismatch final reasoning explicitly mentions experience-level 
   );
 
   assert.equal(result.fitScore, 6.9);
-  assert.equal(result.recommendation.startsWith('Borderline'), true);
+  assert.equal(result.recommendation.startsWith('Skip'), true);
   assert.match(result.shortReasoning, /experience|seniority/i);
   assert.equal(/strong fit worth applying|top priority/i.test(result.shortReasoning), false);
 });
@@ -701,4 +1025,84 @@ test('Skip reasoning is compact and does not repeat visible result fields', () =
 
   assert.ok(splitReasoningSentences(result.shortReasoning).length <= 2);
   assert.equal(/fit score|interview chance|opportunity quality|strong matches include|critical gaps include/i.test(result.shortReasoning), false);
+});
+
+test('mid-level full-stack stack gaps do not become Hard Skip when core overlap exists', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 3.5,
+      recommendation: 'Hard Skip \u274c\u274c',
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs', 'Full Stack development', 'Git'],
+      criticalGaps: ['Node.js / Express', 'MongoDB', 'AWS'],
+      shortReasoning:
+        'Hard Skip because several backend and cloud technologies are missing despite some full-stack overlap.',
+    },
+    {
+      resumeText: 'React TypeScript REST APIs full stack Agile Scrum Git Cursor Copilot',
+      jobDescriptionText:
+        'CyberGuard Advantage Full-Stack Developer. Requirements include React, TypeScript, REST APIs, Node.js, Express, MongoDB, AWS, Agile/Scrum, Git, and AI coding tools. 2+ years experience preferred.',
+    },
+  );
+
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.fitScore, 3.5);
+  assert.equal(result.interviewChance, '3-7%');
+});
+
+test('final repair prevents Apply at or below 3.5 fit score', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 3.5,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: ['Node.js', 'MongoDB', 'AWS'],
+      shortReasoning:
+        'Apply because there is some full-stack overlap, but multiple required technologies are missing.',
+    },
+    {
+      resumeText: 'React TypeScript REST APIs',
+      jobDescriptionText: 'Full-stack role requiring React, TypeScript, REST APIs, Node.js, MongoDB, and AWS.',
+    },
+  );
+
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.fitScore, 3.5);
+  assert.equal(result.interviewChance, '3-7%');
+  assert.equal(/^Apply\b/i.test(result.shortReasoning), false);
+});
+
+test('final repair prevents Apply when reasoning states a major experience-level mismatch', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 6.2,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React'],
+      criticalGaps: ['Major experience-level mismatch'],
+      shortReasoning:
+        'Apply because there is stack overlap, but this has a major experience-level mismatch.',
+    },
+    {
+      resumeText: 'Internship and academic projects with Python and React.',
+      jobDescriptionText: 'Senior Software Engineer requiring production ownership.',
+    },
+  );
+
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.fitScore, 6.2);
+  assert.equal(result.interviewChance, '3-7%');
 });

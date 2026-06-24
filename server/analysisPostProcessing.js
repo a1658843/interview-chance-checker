@@ -25,12 +25,13 @@ function normalizedWords(text) {
       .toLowerCase()
       .replace(/[^a-z0-9+#.]+/g, ' ')
       .split(/\s+/)
+      .map((word) => word.replace(/[.,;:]+$/g, ''))
       .filter((word) => word.length >= 4 && !['lack', 'lacks', 'missing', 'direct', 'experience'].includes(word)),
   );
 }
 
 function hasPreferredLanguage(sentence) {
-  return /\b(preferred|nice[- ]to[- ]have|nice to have|bonus|plus|familiarity|exposure)\b/i.test(sentence);
+  return /\b(preferred|nice[- ]to[- ]have|nice to have|bonus|bonus points?|plus|familiarity|exposure|knowledge of or interest in|interest in|technologies such as|ability to learn quickly|learn quickly|not candidates who already have experience with every technology)\b/i.test(sentence);
 }
 
 function hasRequiredLanguage(sentence) {
@@ -86,6 +87,41 @@ export function removePreferredOnlyCriticalGaps(analysis, jobDescriptionText) {
   };
 }
 
+function getYearsMentionedInGap(gap) {
+  return Array.from(String(gap ?? '').matchAll(/\b(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/gi)).map((match) =>
+    Number(match[1]),
+  );
+}
+
+function isUnsupportedInferredExperienceGap(gap, jobDescriptionText) {
+  const value = String(gap ?? '');
+  const requiredYears = getRequiredExperienceYears(jobDescriptionText);
+  const gapYears = getYearsMentionedInGap(value);
+
+  if (gapYears.length > 0) {
+    return requiredYears === null || !gapYears.includes(requiredYears);
+  }
+
+  if (
+    /\b(experience[- ]level mismatch|seniority mismatch|level mismatch|senior[- ]level|staff[- ]level|lead[- ]level|leadership|communication skills|required professional experience|professional experience beyond internship|demonstrated professional experience|more experience|too senior)\b/i.test(
+      value,
+    )
+  ) {
+    return requiredYears === null;
+  }
+
+  return false;
+}
+
+export function removeUnsupportedInferredCriticalGaps(analysis, jobDescriptionText) {
+  const criticalGaps = Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps : [];
+
+  return {
+    ...analysis,
+    criticalGaps: criticalGaps.filter((gap) => !isUnsupportedInferredExperienceGap(gap, jobDescriptionText)),
+  };
+}
+
 function hasClearRedFlag(jobDescriptionText) {
   return /\b(pipeline|future talent|talent pool|evergreen|bench|resume database)\b/i.test(jobDescriptionText);
 }
@@ -116,6 +152,47 @@ function hasSpecificStaffingDetails(jobDescriptionText) {
   );
 }
 
+function classifyEmployerType(jobDescriptionText) {
+  const text = String(jobDescriptionText ?? '');
+
+  if (
+    /\b(talent network|talent community|join our network|future opportunities|matching platform|candidate marketplace|talent pool|build your profile|create candidate account|future matching opportunities|workerbee|crossing hurdles)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Talent Network';
+  }
+
+  if (
+    /\b(stealth startup|confidential company|no company identity|company confidential|unrealistic compensation|minimal company information|generic responsibilities)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Suspicious Posting';
+  }
+
+  if (
+    /\b(dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Staffing Agency';
+  }
+
+  return null;
+}
+
+function capInterviewChance(interviewChance, cap) {
+  const currentRank = getInterviewChanceUpperBound(interviewChance);
+  const capRank = getInterviewChanceUpperBound(cap);
+
+  if (currentRank === null || capRank === null) {
+    return interviewChance;
+  }
+
+  return currentRank > capRank ? cap : interviewChance;
+}
+
 function maxNumber(values) {
   return values.length > 0 ? Math.max(...values) : null;
 }
@@ -136,6 +213,104 @@ function hasHardYearsRequirementContext(sentence) {
   return /\b(required|requires|requirement|requirements|minimum|minimum qualifications|must have|must-have|you have|need|needed|experience required)\b/i.test(
     sentence,
   );
+}
+
+const educationLevels = {
+  Bachelor: 1,
+  Master: 2,
+  PhD: 3,
+};
+
+function getEducationLevelLabel(level) {
+  if (level === educationLevels.PhD) return 'PhD';
+  if (level === educationLevels.Master) return "Master's";
+  if (level === educationLevels.Bachelor) return "Bachelor's";
+  return null;
+}
+
+function getEducationLevelFromText(text) {
+  const value = String(text ?? '');
+
+  if (/\b(ph\.?\s*d\.?|doctorate|doctoral degree)\b/i.test(value)) {
+    return educationLevels.PhD;
+  }
+
+  if (
+    /\b(m\.?\s*s\.?|m\.?\s*eng\.?|master'?s?|masters|master of science|master of engineering|mba)\b/i.test(value)
+  ) {
+    return educationLevels.Master;
+  }
+
+  if (/\b(b\.?\s*s\.?|b\.?\s*a\.?|bachelor'?s?|bachelors|bachelor of science|bachelor of arts)\b/i.test(value)) {
+    return educationLevels.Bachelor;
+  }
+
+  return null;
+}
+
+function hasEducationRequirementContext(sentence) {
+  return /\b(required|requires|requirement|requirements|minimum|minimum qualifications|qualifications|must have|must-have|you have|need|needed|degree required|education required)\b/i.test(
+    sentence,
+  );
+}
+
+function isRequiredSectionHeading(line) {
+  return /\b(requirements|qualifications|minimum qualifications|must have|what you bring|you have|what we are looking for)\b/i.test(
+    line,
+  );
+}
+
+function isOptionalSectionHeading(line) {
+  return /\b(preferred|nice[- ]to[- ]have|nice to have|bonus|plus|extra credit|knowledge of or interest in|technologies such as|interest in)\b/i.test(line);
+}
+
+export function getRequiredEducationLevel(jobDescriptionText) {
+  const levels = [];
+  let section = 'general';
+
+  for (const line of String(jobDescriptionText ?? '').split(/\r?\n/)) {
+    const trimmedLine = line.trim();
+    const isHeading =
+      trimmedLine.length < 100 &&
+      !/[.!?]$/.test(trimmedLine) &&
+      getEducationLevelFromText(trimmedLine) === null;
+
+    if (isHeading && isOptionalSectionHeading(trimmedLine)) {
+      section = 'optional';
+      continue;
+    }
+
+    if (isHeading && isRequiredSectionHeading(trimmedLine)) {
+      section = 'required';
+      continue;
+    }
+
+    for (const sentence of splitSentences(trimmedLine)) {
+      if (section === 'optional') {
+        continue;
+      }
+
+      if (hasPreferredLanguage(sentence) && !hasRequiredLanguage(sentence)) {
+        continue;
+      }
+
+      const requiredContext = section === 'required' || hasEducationRequirementContext(sentence);
+      if (!requiredContext) {
+        continue;
+      }
+
+      const level = getEducationLevelFromText(sentence);
+      if (level !== null) {
+        levels.push(level);
+      }
+    }
+  }
+
+  return maxNumber(levels);
+}
+
+export function getResumeEducationLevel(resumeText) {
+  return getEducationLevelFromText(resumeText);
 }
 
 export function getRequiredExperienceYears(jobDescriptionText) {
@@ -190,7 +365,7 @@ function getConservativeCandidateExperienceYears(resumeText, candidateLevel) {
 }
 
 function hasJuniorFriendlyLanguage(jobDescriptionText) {
-  return /\b(entry[- ]level|associate|new grad|graduate|junior|0\s*-\s*2 years?|0-2 years?|junior candidates welcome|early career|will train|training provided|internships? count|academic projects? count|school projects? count|course projects? count)\b/i.test(
+  return /\b(entry[- ]level|associate|new grad|graduate|junior|0\s*-\s*2 years?|0-2 years?|junior candidates welcome|early career|will train|training provided|internships? count|academic projects? count|school projects? count|course projects? count|personal projects? count|open[- ]source contributions?|professional work|internships?|academic projects?|personal projects?|multiple levels|depending on experience|ability to learn quickly|learn quickly|not candidates who already have experience with every technology)\b/i.test(
     jobDescriptionText,
   );
 }
@@ -319,6 +494,23 @@ function addCriticalGap(criticalGaps, gap) {
   return [gap, ...existingGaps];
 }
 
+function getRecommendationCapRank(recommendation) {
+  const ranks = {
+    'Hard Skip ❌❌': 0,
+    'Skip ❌': 1,
+    'Apply ✅': 2,
+    'Strong Apply ✅': 3,
+  };
+
+  return ranks[recommendation] ?? 4;
+}
+
+function getMoreRestrictiveRecommendationCap(...caps) {
+  return caps
+    .filter(Boolean)
+    .sort((a, b) => getRecommendationCapRank(a) - getRecommendationCapRank(b))[0] ?? null;
+}
+
 function getCareerLevelPenalty(candidateLevel, jobLevel) {
   if (candidateLevel === 'Junior' && jobLevel === 'Mid') return 0.75;
   if (candidateLevel === 'Junior' && jobLevel === 'Senior') return 2.0;
@@ -349,11 +541,9 @@ function getCareerLevelRecommendationCap(candidateLevel, jobLevel, juniorFriendl
   }
 
   if (candidateLevel === 'Junior' && jobLevel === 'Staff') return 'Skip ❌';
-  if (candidateLevel === 'Junior' && jobLevel === 'Senior') return 'Borderline ⚠️';
-  if (candidateLevel === 'Junior' && jobLevel === 'Mid') {
-    return (requiredYears !== null && requiredYears >= 3) || productionOwnership ? 'Borderline ⚠️' : 'Apply ✅';
-  }
-  if (candidateLevel === 'Mid' && jobLevel === 'Staff') return 'Borderline ⚠️';
+  if (candidateLevel === 'Junior' && jobLevel === 'Senior') return 'Skip ❌';
+  if (candidateLevel === 'Junior' && jobLevel === 'Mid') return 'Apply ✅';
+  if (candidateLevel === 'Mid' && jobLevel === 'Staff') return 'Skip ❌';
   if (candidateLevel === 'Mid' && jobLevel === 'Senior') return 'Apply ✅';
   return null;
 }
@@ -376,7 +566,7 @@ function getExperienceGateRecommendationCap(experienceGate, requiredYears) {
   }
 
   if (experienceGate === 'Hard Gap') {
-    return 'Borderline ⚠️';
+    return 'Skip ❌';
   }
 
   return null;
@@ -396,17 +586,60 @@ function addExperienceGateCriticalGap(criticalGaps, requiredYears) {
   return addCriticalGap(criticalGaps, `${requiredYears}+ years experience requirement not met`);
 }
 
+function getEducationGate(requiredEducationLevel, resumeEducationLevel) {
+  if (requiredEducationLevel === null) return 'Pass';
+  if (resumeEducationLevel !== null && resumeEducationLevel >= requiredEducationLevel) return 'Pass';
+
+  if (requiredEducationLevel === educationLevels.PhD) {
+    return resumeEducationLevel === educationLevels.Master ? 'Hard Gap' : 'Severe Gap';
+  }
+
+  return 'Gap';
+}
+
+function getEducationGateRecommendationCap(educationGate) {
+  if (educationGate === 'Severe Gap') return 'Hard Skip ❌❌';
+  if (educationGate === 'Hard Gap') return 'Skip ❌';
+  if (educationGate === 'Gap') return 'Skip ❌';
+  return null;
+}
+
+function getEducationGateInterviewChance(educationGate) {
+  if (educationGate === 'Severe Gap') return '<1%';
+  if (educationGate === 'Hard Gap') return '1-3%';
+  if (educationGate === 'Gap') return '1-2%';
+  return null;
+}
+
+function getEducationGateScoreCap(educationGate) {
+  if (educationGate === 'Severe Gap') return 3.9;
+  if (educationGate === 'Hard Gap') return 5.0;
+  if (educationGate === 'Gap') return 6.5;
+  return 6.5;
+}
+
+function addEducationGateCriticalGap(criticalGaps, requiredEducationLevel) {
+  const label = getEducationLevelLabel(requiredEducationLevel);
+  return label ? addCriticalGap(criticalGaps, `${label} degree required`) : criticalGaps;
+}
+
 export function applyCandidateJobLevelGuardrails(analysis, { resumeText, jobDescriptionText }) {
   const candidateLevel = inferCandidateLevel(resumeText);
   const jobLevel = inferJobLevel(jobDescriptionText);
   const levelGap = getLevelGap(candidateLevel, jobLevel);
   const requiredYears = getRequiredExperienceYears(jobDescriptionText);
   const candidateYears = getConservativeCandidateExperienceYears(resumeText, candidateLevel);
+  const requiredEducationLevel = getRequiredEducationLevel(jobDescriptionText);
+  const resumeEducationLevel = getResumeEducationLevel(resumeText);
   const juniorFriendly = hasJuniorFriendlyLanguage(jobDescriptionText);
   const productionOwnership = hasStrongProductionOwnership(jobDescriptionText);
   const experienceGate = getExperienceGate(requiredYears, candidateYears, juniorFriendly);
   const experienceGateRecommendationCap = getExperienceGateRecommendationCap(experienceGate, requiredYears);
   const experienceGateInterviewChance = getExperienceGateInterviewChance(experienceGate);
+  const educationGate = getEducationGate(requiredEducationLevel, resumeEducationLevel);
+  const educationGateRecommendationCap = getEducationGateRecommendationCap(educationGate);
+  const educationGateInterviewChance = getEducationGateInterviewChance(educationGate);
+  const educationGateScoreCap = getEducationGateScoreCap(educationGate);
   const careerLevelPenalty = getCareerLevelPenalty(candidateLevel, jobLevel);
   const careerLevelScoreCap = getCareerLevelScoreCap(candidateLevel, jobLevel, juniorFriendly);
   const recommendationCap = getCareerLevelRecommendationCap(
@@ -424,6 +657,9 @@ export function applyCandidateJobLevelGuardrails(analysis, { resumeText, jobDesc
     requiredExperienceYears: requiredYears,
     candidateExperienceYears: candidateYears,
     experienceGate,
+    requiredEducationLevel,
+    resumeEducationLevel,
+    educationGate,
   };
   const addExperienceYearsGap = (criticalGaps) => {
     if (requiredYears === null || requiredYears < 3 || experienceGate === 'Pass') {
@@ -447,15 +683,39 @@ export function applyCandidateJobLevelGuardrails(analysis, { resumeText, jobDesc
     guardedAnalysis = {
       ...guardedAnalysis,
       fitScore: Number(cappedScore.toFixed(1)),
-      recommendationCap: experienceGateRecommendationCap ?? recommendationCap ?? guardedAnalysis.recommendationCap,
-      criticalGaps: addCriticalGap(guardedAnalysis.criticalGaps, mismatchGap),
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        experienceGateRecommendationCap,
+        educationGateRecommendationCap,
+        recommendationCap,
+        guardedAnalysis.recommendationCap,
+      ),
+      criticalGaps:
+        requiredYears === null
+          ? guardedAnalysis.criticalGaps
+          : addCriticalGap(guardedAnalysis.criticalGaps, mismatchGap),
+    };
+  }
+
+  if (educationGate !== 'Pass') {
+    guardedAnalysis = {
+      ...guardedAnalysis,
+      fitScore: Number(Math.min(Number(guardedAnalysis.fitScore ?? 0), educationGateScoreCap).toFixed(1)),
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        educationGateRecommendationCap,
+        guardedAnalysis.recommendationCap,
+      ),
+      interviewChance: educationGateInterviewChance ?? guardedAnalysis.interviewChance,
+      criticalGaps: addEducationGateCriticalGap(guardedAnalysis.criticalGaps, requiredEducationLevel),
     };
   }
 
   if (experienceGateRecommendationCap || experienceGateInterviewChance) {
     guardedAnalysis = {
       ...guardedAnalysis,
-      recommendationCap: experienceGateRecommendationCap ?? guardedAnalysis.recommendationCap,
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        experienceGateRecommendationCap,
+        guardedAnalysis.recommendationCap,
+      ),
       interviewChance: experienceGateInterviewChance ?? guardedAnalysis.interviewChance,
     };
   }
@@ -469,7 +729,26 @@ export function applyCandidateJobLevelGuardrails(analysis, { resumeText, jobDesc
 }
 
 export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) {
-  const companyType = analysis?.companyType ?? 'Unknown';
+  const detectedCompanyType = classifyEmployerType(jobDescriptionText);
+  const companyType = detectedCompanyType ?? analysis?.companyType ?? 'Unknown';
+
+  if (companyType === 'Talent Network') {
+    return {
+      ...analysis,
+      companyType,
+      opportunityQuality: 'Medium',
+      interviewChance: capInterviewChance(analysis?.interviewChance, '3-7%'),
+    };
+  }
+
+  if (companyType === 'Suspicious Posting') {
+    return {
+      ...analysis,
+      companyType,
+      opportunityQuality: 'Medium',
+      interviewChance: capInterviewChance(analysis?.interviewChance, '3-7%'),
+    };
+  }
 
   if (
     companyType === 'Direct Employer' &&
@@ -479,6 +758,7 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
   ) {
     return {
       ...analysis,
+      companyType,
       opportunityQuality: 'High',
     };
   }
@@ -486,11 +766,16 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
   if (companyType === 'Staffing Agency') {
     return {
       ...analysis,
+      companyType,
       opportunityQuality: hasSpecificStaffingDetails(jobDescriptionText) ? 'Medium' : 'Low',
+      interviewChance: capInterviewChance(analysis?.interviewChance, '5-10%'),
     };
   }
 
-  return analysis;
+  return {
+    ...analysis,
+    companyType,
+  };
 }
 
 function removeSkillFromReasoning(reasoning, skill) {
@@ -598,7 +883,7 @@ function contradictsRecommendation(analysis) {
   if (recommendation === 'Strong Apply ✅') {
     return [
       'not a strong apply',
-      'borderline',
+      'apply',
       'apply only if',
       'skip',
       'low expected return',
@@ -606,7 +891,7 @@ function contradictsRecommendation(analysis) {
     ].some((phrase) => reasoning.includes(phrase));
   }
 
-  if (recommendation === 'Borderline ⚠️') {
+  if (recommendation === 'Apply ✅') {
     return ['top priority', 'must apply', 'highest priority', 'strong apply', 'worth prioritizing'].some(
       (phrase) => reasoning.includes(phrase),
     );
@@ -690,6 +975,16 @@ function hasExperienceGateReasoningIssue(analysis) {
   );
 }
 
+function hasEducationGateReasoningIssue(analysis) {
+  if (!['Gap', 'Hard Gap', 'Severe Gap'].includes(analysis?.educationGate)) {
+    return false;
+  }
+
+  return !/\b(education|degree|bachelor|master|phd|ph\.?d|doctorate)\b/i.test(
+    String(analysis?.shortReasoning ?? ''),
+  );
+}
+
 function hasUnsupportedPositiveYearsClaim(analysis, { resumeText, jobDescriptionText }) {
   const requiredYears = analysis?.requiredExperienceYears ?? getRequiredExperienceYears(jobDescriptionText);
   const candidateYears = analysis?.candidateExperienceYears ?? getExplicitCandidateExperienceYears(resumeText);
@@ -726,6 +1021,7 @@ function hasFinalConsistencyIssue(analysis, { resumeText, jobDescriptionText }) 
     hasLevelMismatchRecommendationContradiction(analysis) ||
     hasLevelMismatchReasoningIssue(analysis) ||
     hasExperienceGateReasoningIssue(analysis) ||
+    hasEducationGateReasoningIssue(analysis) ||
     hasUnsupportedPositiveYearsClaim(analysis, { resumeText, jobDescriptionText }) ||
     /\b(candidate should apply only if|candidate is especially interested)\b/i.test(
       String(analysis?.shortReasoning ?? ''),
@@ -737,9 +1033,8 @@ function getRecommendationRank(recommendation) {
   const ranks = {
     'Hard Skip ❌❌': 0,
     'Skip ❌': 1,
-    'Borderline ⚠️': 2,
-    'Apply ✅': 3,
-    'Strong Apply ✅': 4,
+    'Apply ✅': 2,
+    'Strong Apply ✅': 3,
   };
 
   return ranks[recommendation] ?? 0;
@@ -751,6 +1046,76 @@ function capRecommendation(recommendation, cap) {
   }
 
   return getRecommendationRank(recommendation) > getRecommendationRank(cap) ? cap : recommendation;
+}
+
+function getInterviewChanceUpperBound(interviewChance) {
+  const value = String(interviewChance ?? '');
+  const matches = [...value.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+
+  if (matches.length === 0) {
+    return value.includes('<') ? 1 : null;
+  }
+
+  return Math.max(...matches);
+}
+
+function getStrongMatchCount(analysis) {
+  return Array.isArray(analysis?.strongMatches) ? analysis.strongMatches.length : 0;
+}
+
+function hasExtremeMismatchForHardSkip(analysis) {
+  const criticalGaps = Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps.join(' ') : '';
+  const interviewChanceUpperBound = getInterviewChanceUpperBound(analysis?.interviewChance);
+
+  return (
+    (interviewChanceUpperBound !== null && interviewChanceUpperBound <= 1) ||
+    analysis?.educationGate === 'Severe Gap' ||
+    (analysis?.experienceGate === 'Severe Gap' && Number(analysis?.requiredExperienceYears ?? 0) >= 8) ||
+    analysis?.levelGap === 'Severe' ||
+    /\b(security clearance|active clearance|secret clearance|top secret|phd|ph\.?d|doctorate|embedded systems?|ios|swift|android|kotlin|golang|go\b|machine learning|ml\b|data scientist|data science)\b/i.test(
+      criticalGaps,
+    )
+  );
+}
+
+function softenUnsupportedHardSkip(analysis) {
+  if (analysis?.recommendation !== 'Hard Skip ❌❌' || hasExtremeMismatchForHardSkip(analysis)) {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    recommendation: getStrongMatchCount(analysis) >= 3 ? 'Apply ✅' : 'Skip ❌',
+  };
+}
+
+function hasBlockingExperienceMismatchForRecommendation(analysis) {
+  const reasoningText = [
+    analysis?.shortReasoning,
+    ...(Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps : []),
+  ].join(' ');
+
+  return (
+    /\b(?:major|severe) experience[- ]level mismatch\b/i.test(reasoningText) ||
+    /\bsenior[- ]level mismatch\b/i.test(reasoningText)
+  );
+}
+
+function applyRecommendationHardRules(analysis) {
+  const recommendationType = getRecommendationType(analysis?.recommendation);
+  const score = Number(analysis?.fitScore);
+  const mustNotApply =
+    (Number.isFinite(score) && score <= 3.5) ||
+    hasBlockingExperienceMismatchForRecommendation(analysis);
+
+  if (!mustNotApply || !['Apply', 'Strong Apply'].includes(recommendationType)) {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    recommendation: hasExtremeMismatchForHardSkip(analysis) ? 'Hard Skip \u274c\u274c' : 'Skip \u274c',
+  };
 }
 
 function repairRecommendationForConsistency(analysis) {
@@ -766,7 +1131,7 @@ function repairRecommendationForConsistency(analysis) {
     repairedBeforeCap = {
       ...repairedBeforeCap,
       fitScore: Math.min(Number(repairedBeforeCap.fitScore ?? 0), 6.9),
-      recommendationCap: repairedBeforeCap.recommendationCap ?? 'Borderline ⚠️',
+      recommendationCap: repairedBeforeCap.recommendationCap ?? 'Skip ❌',
     };
   }
 
@@ -781,8 +1146,42 @@ function repairRecommendationForConsistency(analysis) {
   } else if (repairedBeforeCap?.experienceGate === 'Hard Gap') {
     repairedBeforeCap = {
       ...repairedBeforeCap,
-      recommendationCap: repairedBeforeCap.recommendationCap ?? 'Borderline ⚠️',
+      recommendationCap: repairedBeforeCap.recommendationCap ?? 'Skip ❌',
       interviewChance: repairedBeforeCap.interviewChance === '<1%' ? '<1%' : '1-3%',
+    };
+  }
+
+  if (repairedBeforeCap?.educationGate === 'Severe Gap') {
+    repairedBeforeCap = {
+      ...repairedBeforeCap,
+      fitScore: Math.min(Number(repairedBeforeCap.fitScore ?? 0), 3.9),
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        'Hard Skip ❌❌',
+        repairedBeforeCap.recommendationCap,
+      ),
+      interviewChance: '<1%',
+    };
+  } else if (repairedBeforeCap?.educationGate === 'Hard Gap') {
+    repairedBeforeCap = {
+      ...repairedBeforeCap,
+      fitScore: Math.min(Number(repairedBeforeCap.fitScore ?? 0), 5.0),
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        'Skip ❌',
+        repairedBeforeCap.recommendationCap,
+      ),
+      interviewChance: repairedBeforeCap.interviewChance === '<1%' ? '<1%' : '1-3%',
+    };
+  } else if (repairedBeforeCap?.educationGate === 'Gap') {
+    repairedBeforeCap = {
+      ...repairedBeforeCap,
+      fitScore: Math.min(Number(repairedBeforeCap.fitScore ?? 0), 6.5),
+      recommendationCap: getMoreRestrictiveRecommendationCap(
+        'Skip ❌',
+        repairedBeforeCap.recommendationCap,
+      ),
+      interviewChance: ['<1%', '1-2%'].includes(repairedBeforeCap.interviewChance)
+        ? repairedBeforeCap.interviewChance
+        : '1-2%',
     };
   }
 
@@ -790,10 +1189,10 @@ function repairRecommendationForConsistency(analysis) {
     repairedBeforeCap?.recommendation,
     repairedBeforeCap?.recommendationCap,
   );
-  let repairedAnalysis = {
+  let repairedAnalysis = softenUnsupportedHardSkip({
     ...repairedBeforeCap,
     recommendation: cappedRecommendation,
-  };
+  });
 
   if (hasRecommendationQualityContradiction(analysis)) {
     repairedAnalysis = {
@@ -804,33 +1203,35 @@ function repairRecommendationForConsistency(analysis) {
 
   return repairedAnalysis;
 }
-
 function getRecommendationType(recommendation) {
   if (String(recommendation ?? '').startsWith('Hard Skip')) return 'Hard Skip';
   if (String(recommendation ?? '').startsWith('Skip')) return 'Skip';
-  if (String(recommendation ?? '').startsWith('Borderline')) return 'Borderline';
   if (String(recommendation ?? '').startsWith('Strong Apply')) return 'Strong Apply';
   if (String(recommendation ?? '').startsWith('Apply')) return 'Apply';
   return 'Skip';
 }
-
 function getReasoningSentenceLimit(recommendation) {
   const type = getRecommendationType(recommendation);
 
   if (type === 'Hard Skip') return 1;
   if (type === 'Skip') return 2;
-  if (type === 'Borderline') return 2;
+  if (type === 'Apply') return 2;
   return 3;
 }
 
 function buildConsistentReasoning(analysis) {
   const recommendationType = getRecommendationType(analysis.recommendation);
   const hasExperienceGate = ['Hard Gap', 'Severe Gap'].includes(analysis.experienceGate);
+  const hasEducationGate = ['Gap', 'Hard Gap', 'Severe Gap'].includes(analysis.educationGate);
   const hasLevelMismatch = ['Large', 'Severe'].includes(analysis.levelGap);
   const hasCriticalGaps = Array.isArray(analysis.criticalGaps) && analysis.criticalGaps.length > 0;
   const hasStrongMatches = Array.isArray(analysis.strongMatches) && analysis.strongMatches.length > 0;
 
   if (recommendationType === 'Hard Skip') {
+    if (hasEducationGate) {
+      return 'The role requires an advanced education credential that is not demonstrated by the resume.';
+    }
+
     if (hasExperienceGate || hasLevelMismatch) {
       return 'This role requires significantly more experience and seniority than demonstrated by the resume.';
     }
@@ -839,6 +1240,10 @@ function buildConsistentReasoning(analysis) {
   }
 
   if (recommendationType === 'Skip') {
+    if (hasEducationGate) {
+      return 'The role has a required education credential that is not demonstrated by the resume.';
+    }
+
     if (hasExperienceGate || hasLevelMismatch) {
       return 'The role is above the resume’s demonstrated experience level. There are better opportunities to prioritize.';
     }
@@ -846,16 +1251,20 @@ function buildConsistentReasoning(analysis) {
     return 'The technical overlap is limited and several core requirements are missing. There are better opportunities to prioritize.';
   }
 
-  if (recommendationType === 'Borderline') {
+  if (recommendationType === 'Apply') {
+    if (hasEducationGate) {
+      return 'Apply because the role has some overlap, but the required degree is not demonstrated by the resume.';
+    }
+
     if (hasExperienceGate || hasLevelMismatch) {
-      return 'The core stack has some overlap, but the experience level is the main concern.';
+      return 'Apply because the core stack has some overlap, but the experience level is the main concern.';
     }
 
     if (hasCriticalGaps) {
-      return 'The role has plausible overlap, but one core requirement creates a meaningful gap.';
+      return 'Apply because the role has useful overlap, but one core requirement creates a meaningful gap.';
     }
 
-    return 'The role is plausible, but the expected return is not strong enough to prioritize.';
+    return 'Apply because the expected return is not strong enough to prioritize.';
   }
 
   if (recommendationType === 'Strong Apply') {
@@ -904,23 +1313,33 @@ export function applyFinalConsistencyRepair(analysis, { resumeText, jobDescripti
       requiredExperienceYears,
       candidateExperienceYears,
       experienceGate,
+      requiredEducationLevel,
+      resumeEducationLevel,
+      educationGate,
       recommendationCap,
       ...publicValue
     } = value;
     return publicValue;
   };
 
-  if (
+  const reasoningConsistentAnalysis =
     !hasFinalConsistencyIssue(recommendationConsistentAnalysis, { resumeText, jobDescriptionText }) &&
     !hasUxReasoningIssue(recommendationConsistentAnalysis)
-  ) {
-    return stripInternalFields(recommendationConsistentAnalysis);
+      ? recommendationConsistentAnalysis
+      : {
+          ...recommendationConsistentAnalysis,
+          shortReasoning: buildConsistentReasoning(recommendationConsistentAnalysis),
+        };
+  const finalRecommendationAnalysis = applyRecommendationHardRules(reasoningConsistentAnalysis);
+
+  if (finalRecommendationAnalysis.recommendation !== reasoningConsistentAnalysis.recommendation) {
+    return stripInternalFields({
+      ...finalRecommendationAnalysis,
+      shortReasoning: buildConsistentReasoning(finalRecommendationAnalysis),
+    });
   }
 
-  return stripInternalFields({
-    ...recommendationConsistentAnalysis,
-    shortReasoning: buildConsistentReasoning(recommendationConsistentAnalysis),
-  });
+  return stripInternalFields(finalRecommendationAnalysis);
 }
 
 export function recalibrateFitAfterPreferredGapRemoval(analysis) {
@@ -928,23 +1347,32 @@ export function recalibrateFitAfterPreferredGapRemoval(analysis) {
     analysis?.removedPreferredOnlyGapCount > 0 &&
     Array.isArray(analysis.criticalGaps) &&
     analysis.criticalGaps.length === 0 &&
-    typeof analysis.fitScore === 'number' &&
-    analysis.fitScore >= 7 &&
-    analysis.fitScore < 8
+    typeof analysis.fitScore === 'number'
   ) {
     const strongMatchCount = Array.isArray(analysis.strongMatches) ? analysis.strongMatches.length : 0;
 
-    return {
-      ...analysis,
-      fitScore: strongMatchCount >= 4 ? 8.5 : 8.0,
-    };
+    if (analysis.fitScore >= 7 && analysis.fitScore < 8) {
+      return {
+        ...analysis,
+        fitScore: strongMatchCount >= 4 ? 8.5 : 8.0,
+      };
+    }
+
+    if (analysis.fitScore < 7 && strongMatchCount >= 3) {
+      return {
+        ...analysis,
+        fitScore: 6.5,
+      };
+    }
+
   }
 
   return analysis;
 }
 
 export function applyAnalysisGuardrails(analysis, { jobDescriptionText, resumeText }) {
-  const withoutPreferredOnlyGaps = removePreferredOnlyCriticalGaps(analysis, jobDescriptionText);
+  const withoutUnsupportedInferredGaps = removeUnsupportedInferredCriticalGaps(analysis, jobDescriptionText);
+  const withoutPreferredOnlyGaps = removePreferredOnlyCriticalGaps(withoutUnsupportedInferredGaps, jobDescriptionText);
   const withRecalibratedFit = recalibrateFitAfterPreferredGapRemoval(withoutPreferredOnlyGaps);
   const withLevelGuardrails = applyCandidateJobLevelGuardrails(withRecalibratedFit, {
     resumeText,

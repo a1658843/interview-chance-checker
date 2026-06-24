@@ -1,5 +1,7 @@
 import type { AnalysisResult, StrongMatch } from '../types/analysis';
 import { clampScore, getRecommendation } from './scoring';
+import { extractApplicationRequirements, getEffortLevel } from './applicationRequirements';
+import { extractEmploymentType } from './employmentType';
 import { extractKeywords, normalizeText } from './textUtils';
 
 type RoleType = 'Backend' | 'Full stack' | 'Implementation engineer' | 'Frontend' | 'DevOps/SRE' | 'Senior/staff/principal';
@@ -17,6 +19,11 @@ type SkillMatch = {
   matched: boolean;
   strength: number;
   evidence: string[];
+};
+
+type AlternativeTechnology = {
+  label: string;
+  phrases: string[];
 };
 
 const ROLE_TYPES: Array<{ type: RoleType; patterns: string[] }> = [
@@ -85,6 +92,8 @@ const NON_REQUIREMENT_HEADINGS = [
 ];
 
 const OPTIONAL_HEADINGS = ['nice to have', 'nice-to-have', 'preferred', 'bonus', 'plus', 'extra credit'];
+const SOFT_REQUIREMENT_LANGUAGE =
+  /knowledge of or interest in|interest in|technologies such as|bonus points?|nice to have|nice-to-have|preferred|ability to learn quickly|learn quickly|not candidates who already have experience with every technology/i;
 
 const REQUIRED_HEADINGS = [
   'requirements',
@@ -309,6 +318,20 @@ const SKILL_SIGNALS: SkillSignal[] = [
   },
 ];
 
+const ALTERNATIVE_TECHNOLOGIES: AlternativeTechnology[] = [
+  { label: 'React', phrases: ['react'] },
+  { label: 'Angular', phrases: ['angular'] },
+  { label: 'Vue', phrases: ['vue', 'vue.js'] },
+  { label: 'Python', phrases: ['python', 'fastapi', 'django', 'flask'] },
+  { label: 'Java', phrases: ['java', 'spring', 'spring boot'] },
+  { label: 'C# / .NET', phrases: ['c#', '.net', 'asp.net core'] },
+  { label: 'AWS', phrases: ['aws', 'amazon web services'] },
+  { label: 'Azure', phrases: ['azure', 'microsoft azure'] },
+  { label: 'GCP', phrases: ['gcp', 'google cloud', 'google cloud platform'] },
+  { label: 'Node.js', phrases: ['node', 'node.js'] },
+  { label: 'SQL', phrases: ['sql', 'postgres', 'postgresql', 'mysql', 'sql server'] },
+];
+
 function includesAny(text: string, patterns: string[]) {
   return patterns.some((pattern) => new RegExp(`(^|\\s)${escapeRegExp(pattern)}(?=\\s|$|[.,;:])`, 'i').test(text));
 }
@@ -375,7 +398,7 @@ function splitRequirementText(jobDescriptionText: string) {
   for (const line of lines) {
     const normalizedLine = normalizeText(line).trim();
     const isHeading = line.trim().length < 100 && !/[.!?]$/.test(line.trim());
-    const inlineOptionalMatch = line.match(/nice to have|nice-to-have|preferred|bonus|plus|extra credit/i);
+    const inlineOptionalMatch = line.match(SOFT_REQUIREMENT_LANGUAGE);
     const inlineOptionalIndex = inlineOptionalMatch?.index;
 
     if (inlineOptionalIndex !== undefined) {
@@ -603,13 +626,118 @@ function getDaysSincePosted(text: string) {
 }
 
 function getRequiredYears(text: string) {
-  const yearMatch = text.match(/(\d{1,2})\+?\s*(?:years?|yrs?)/);
-  return yearMatch ? Number(yearMatch[1]) : null;
+  const sentences = text
+    .split(/(?<=[.!?])\s+|\n+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
+  const years = sentences.flatMap((sentence) => {
+    const hasRequirementContext =
+      /\b(required|requires|requirement|requirements|minimum|minimum qualifications|qualifications|must have|must-have|you have|need|needed|looking for|candidate|applicant|experience required|professional experience|software engineering experience|software development experience|developer experience|engineering experience)\b/i.test(
+        sentence,
+      );
+
+    if (!hasRequirementContext) {
+      return [];
+    }
+
+    return Array.from(sentence.matchAll(/\b(\d{1,2})\+?\s*(?:\+|plus)?\s*(?:years?|yrs?)\b/gi)).map((match) =>
+      Number(match[1]),
+    );
+  });
+
+  return years.length ? Math.max(...years) : null;
 }
 
 function getResumeYears(text: string) {
   const yearMatches = Array.from(text.matchAll(/(\d{1,2})\+?\s*(?:years?|yrs?)/g)).map((match) => Number(match[1]));
   return yearMatches.length ? Math.max(...yearMatches) : null;
+}
+
+const EDUCATION_LEVELS = {
+  bachelor: 1,
+  master: 2,
+  phd: 3,
+} as const;
+
+function getEducationLevelLabel(level: number | null) {
+  if (level === EDUCATION_LEVELS.phd) return 'PhD';
+  if (level === EDUCATION_LEVELS.master) return "Master's";
+  if (level === EDUCATION_LEVELS.bachelor) return "Bachelor's";
+  return null;
+}
+
+function getEducationLevelFromText(text: string) {
+  if (/\b(ph\.?\s*d\.?|doctorate|doctoral degree)\b/i.test(text)) {
+    return EDUCATION_LEVELS.phd;
+  }
+
+  if (/\b(m\.?\s*s\.?|m\.?\s*eng\.?|master'?s?|masters|master of science|master of engineering|mba)\b/i.test(text)) {
+    return EDUCATION_LEVELS.master;
+  }
+
+  if (/\b(b\.?\s*s\.?|b\.?\s*a\.?|bachelor'?s?|bachelors|bachelor of science|bachelor of arts)\b/i.test(text)) {
+    return EDUCATION_LEVELS.bachelor;
+  }
+
+  return null;
+}
+
+function getRequiredEducationLevel(requiredText: string) {
+  if (!includesAny(requiredText, REQUIRED_HEADINGS)) {
+    return null;
+  }
+
+  return getEducationLevelFromText(requiredText);
+}
+
+function getResumeEducationLevel(resumeText: string) {
+  return getEducationLevelFromText(resumeText);
+}
+
+function getEducationRequirementGap(requiredText: string, resumeText: string) {
+  const requiredEducationLevel = getRequiredEducationLevel(requiredText);
+  const resumeEducationLevel = getResumeEducationLevel(resumeText);
+
+  if (requiredEducationLevel === null) {
+    return null;
+  }
+
+  if (resumeEducationLevel !== null && resumeEducationLevel >= requiredEducationLevel) {
+    return null;
+  }
+
+  const label = getEducationLevelLabel(requiredEducationLevel);
+  return label ? `${label} degree required` : null;
+}
+
+function getEducationScoreCap(requiredText: string, resumeText: string) {
+  const requiredEducationLevel = getRequiredEducationLevel(requiredText);
+  const resumeEducationLevel = getResumeEducationLevel(resumeText);
+
+  if (requiredEducationLevel === null || (resumeEducationLevel !== null && resumeEducationLevel >= requiredEducationLevel)) {
+    return null;
+  }
+
+  if (requiredEducationLevel === EDUCATION_LEVELS.phd) {
+    return resumeEducationLevel === EDUCATION_LEVELS.master ? 5.0 : 3.9;
+  }
+
+  return 6.5;
+}
+
+function getEducationInterviewChance(requiredText: string, resumeText: string) {
+  const requiredEducationLevel = getRequiredEducationLevel(requiredText);
+  const resumeEducationLevel = getResumeEducationLevel(resumeText);
+
+  if (requiredEducationLevel === null || (resumeEducationLevel !== null && resumeEducationLevel >= requiredEducationLevel)) {
+    return null;
+  }
+
+  if (requiredEducationLevel === EDUCATION_LEVELS.phd) {
+    return resumeEducationLevel === EDUCATION_LEVELS.master ? '1-3%' : '<1%';
+  }
+
+  return '1-2%';
 }
 
 function isEarlyCareerResume(text: string) {
@@ -663,10 +791,54 @@ function hasEvidenceForAny(resumeText: string, phrases: string[]) {
   return phrases.some((phrase) => new RegExp(`(^|\\s)${escapeRegExp(phrase)}(?=\\s|$|[.,;:])`, 'i').test(resumeText));
 }
 
+function hasAlternativeRequirementCue(text: string) {
+  return /\b(or|and\s+or|one of|either|such as|e\.g)\b/i.test(text);
+}
+
+function splitRequirementClauses(text: string) {
+  return text
+    .split(/[\n.;]+/)
+    .map((clause) => clause.trim())
+    .filter(Boolean);
+}
+
+function getMentionedAlternativeTechnologies(text: string) {
+  return ALTERNATIVE_TECHNOLOGIES.filter((technology) => hasEvidenceForAny(text, technology.phrases));
+}
+
+function getSatisfiedAlternativeGroups(requiredText: string, resumeText: string) {
+  return splitRequirementClauses(requiredText)
+    .filter(hasAlternativeRequirementCue)
+    .map(getMentionedAlternativeTechnologies)
+    .filter((group) => group.length >= 2)
+    .filter((group) => group.some((technology) => hasEvidenceForAny(resumeText, technology.phrases)));
+}
+
+function isSatisfiedAlternativeTechnology(phrases: string[], satisfiedAlternativeGroups: AlternativeTechnology[][]) {
+  return satisfiedAlternativeGroups.some((group) =>
+    group.some((technology) =>
+      technology.phrases.some((alternativePhrase) =>
+        phrases.some(
+          (phrase) =>
+            phrase.toLowerCase() === alternativePhrase.toLowerCase(),
+        ),
+      ),
+    ),
+  );
+}
+
+function isSatisfiedAlternativeSkillSignal(signal: SkillSignal, satisfiedAlternativeGroups: AlternativeTechnology[][]) {
+  return isSatisfiedAlternativeTechnology(
+    [...signal.aliases, ...(signal.related ?? [])],
+    satisfiedAlternativeGroups,
+  );
+}
+
 function getCriticalRequirementGaps(requiredText: string, resumeText: string) {
   const gaps: string[] = [];
   const requiredYears = getRequiredYears(requiredText);
   const resumeYears = getResumeYears(resumeText);
+  const satisfiedAlternativeGroups = getSatisfiedAlternativeGroups(requiredText, resumeText);
   const criticalLanguageSignals = [
     { label: 'Java/Spring Boot/Microservices', phrases: ['java', 'spring', 'spring boot', 'microservices', 'microservice'] },
     { label: 'Python', phrases: ['python', 'fastapi', 'django', 'flask'] },
@@ -746,10 +918,17 @@ function getCriticalRequirementGaps(requiredText: string, resumeText: string) {
   criticalLanguageSignals.forEach((language) => {
     const requiredLanguage = hasEvidenceForAny(requiredText, language.phrases);
     const hasLanguageEvidence = hasEvidenceForAny(resumeText, language.phrases);
+    const satisfiedByAlternative = isSatisfiedAlternativeTechnology(language.phrases, satisfiedAlternativeGroups);
     const alreadyCoveredByYearsGap = gaps.some((gap) => gap.includes(language.label));
     const alreadyCoveredBySpecializedGap = language.label === 'Java' && gaps.includes('Real-time server-side Java');
 
-    if (requiredLanguage && !hasLanguageEvidence && !alreadyCoveredByYearsGap && !alreadyCoveredBySpecializedGap) {
+    if (
+      requiredLanguage &&
+      !hasLanguageEvidence &&
+      !satisfiedByAlternative &&
+      !alreadyCoveredByYearsGap &&
+      !alreadyCoveredBySpecializedGap
+    ) {
       gaps.push(`${language.label} experience`);
     }
   });
@@ -1074,6 +1253,112 @@ function getEstimatedInterviewChance(score: number, marketCompetition: AnalysisR
   return '10-20%';
 }
 
+function getInterviewChanceCapRank(interviewChance: string) {
+  const value = String(interviewChance ?? '');
+  const matches = [...value.matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+
+  if (matches.length === 0) {
+    return value.includes('<') ? 1 : null;
+  }
+
+  return Math.max(...matches);
+}
+
+function capInterviewChance(interviewChance: string, cap: string) {
+  const currentRank = getInterviewChanceCapRank(interviewChance);
+  const capRank = getInterviewChanceCapRank(cap);
+
+  if (currentRank === null || capRank === null) {
+    return interviewChance;
+  }
+
+  return currentRank > capRank ? cap : interviewChance;
+}
+
+function classifyEmployerType(jobText: string): AnalysisResult['companyType'] {
+  if (
+    includesAny(jobText, [
+      'talent network',
+      'talent community',
+      'join our network',
+      'future opportunities',
+      'matching platform',
+      'candidate marketplace',
+      'talent pool',
+      'build your profile',
+      'create candidate account',
+      'future matching opportunities',
+      'workerbee',
+      'crossing hurdles',
+    ])
+  ) {
+    return 'Talent Network';
+  }
+
+  if (
+    includesAny(jobText, [
+      'stealth startup',
+      'confidential company',
+      'no company identity',
+      'company confidential',
+    ]) ||
+    (/unrealistic compensation|minimal company information|generic responsibilities/i.test(jobText) &&
+      !includesAny(jobText, ['product', 'platform', 'team', 'customer']))
+  ) {
+    return 'Suspicious Posting';
+  }
+
+  if (
+    includesAny(jobText, [
+      'dice',
+      'recruiter',
+      'recruiting firm',
+      'recruiting agency',
+      'staffing agency',
+      'staffing partner',
+      'staffing firm',
+      'contract placement',
+      'placement firm',
+      'posting for a client',
+      'client is seeking',
+      'our client',
+    ])
+  ) {
+    return 'Staffing Agency';
+  }
+
+  if (includesAny(jobText, ['consulting', 'client services', 'implementation partner'])) {
+    return 'Consulting';
+  }
+
+  if (includesAny(jobText, ['startup', 'seed stage', 'series a', 'series b'])) {
+    return 'Startup';
+  }
+
+  return 'Direct Employer';
+}
+
+function getOpportunityQuality(companyType: AnalysisResult['companyType']): AnalysisResult['opportunityQuality'] {
+  if (
+    companyType === 'Staffing Agency' ||
+    companyType === 'Suspicious Posting' ||
+    companyType === 'Talent Network'
+  ) {
+    return 'Medium';
+  }
+  return 'High';
+}
+
+function adjustInterviewChanceForEmployerType(
+  interviewChance: string,
+  companyType: AnalysisResult['companyType'],
+) {
+  if (companyType === 'Staffing Agency') return capInterviewChance(interviewChance, '5-10%');
+  if (companyType === 'Talent Network') return capInterviewChance(interviewChance, '3-7%');
+  if (companyType === 'Suspicious Posting') return capInterviewChance(interviewChance, '3-7%');
+  return interviewChance;
+}
+
 function getStrongMatchPriority(label: string, roleTypes: RoleType[]) {
   if (!roleTypes.includes('Implementation engineer')) {
     return 0;
@@ -1116,8 +1401,14 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
   const learningFriendly = includesAny(normalizedJob, LEARNING_FRIENDLY_PATTERNS);
 
   const { required, optional } = getRequiredAndOptionalSkills(normalizedRequired, normalizedOptional);
+  const satisfiedAlternativeGroups = getSatisfiedAlternativeGroups(normalizedRequired, normalizedResume);
+  const scoringRequired = required.filter(
+    (signal) =>
+      getSkillMatch(signal, resumeText, normalizedResume).matched ||
+      !isSatisfiedAlternativeSkillSignal(signal, satisfiedAlternativeGroups),
+  );
   const roleTypes = detectRoleTypes(normalizedRelevantJob);
-  const requiredSkillMatches = required.map((signal) => getSkillMatch(signal, resumeText, normalizedResume));
+  const requiredSkillMatches = scoringRequired.map((signal) => getSkillMatch(signal, resumeText, normalizedResume));
   const optionalSkillMatches = optional.map((signal) => getSkillMatch(signal, resumeText, normalizedResume));
   const allSkillMatches = [...requiredSkillMatches, ...optionalSkillMatches];
 
@@ -1141,7 +1432,11 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
       keywordScore * 1.2 +
       missingPenaltyRelief,
   );
-  const criticalGaps = getCriticalRequirementGaps(normalizedRequired, normalizedResume);
+  const educationGap = getEducationRequirementGap(requiredText, resumeText);
+  const criticalGaps = unique([
+    ...getCriticalRequirementGaps(normalizedRequired, normalizedResume),
+    ...(educationGap ? [educationGap] : []),
+  ]);
   const platformIdentityGaps = getPlatformIdentityGaps(normalizedRelevantJob, normalizedResume);
   const platformIdentitySummary = platformIdentityGaps.join(' ');
   const additionalSpecializedGaps = getSpecializedGaps(normalizedRequired, normalizedResume).filter(
@@ -1155,15 +1450,28 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     specializedGaps.length,
     platformIdentityGaps.length,
   );
-  const score = scoreCap === null ? uncappedScore : Math.min(uncappedScore, scoreCap);
+  const educationScoreCap = getEducationScoreCap(requiredText, resumeText);
+  const combinedScoreCap = [scoreCap, educationScoreCap].filter((value): value is number => value !== null);
+  const score = combinedScoreCap.length ? Math.min(uncappedScore, ...combinedScoreCap) : uncappedScore;
   const marketContext = getMarketContext(normalizedJob, seniorityFitScore);
-  const estimatedInterviewChance = getEstimatedInterviewChance(score, marketContext.marketCompetition);
+  const companyType = classifyEmployerType(normalizedJob);
+  const opportunityQuality = getOpportunityQuality(companyType);
+  const estimatedInterviewChance =
+    getEducationInterviewChance(requiredText, resumeText) ??
+    adjustInterviewChanceForEmployerType(
+      getEstimatedInterviewChance(score, marketContext.marketCompetition),
+      companyType,
+    );
+  const applicationRequirements = extractApplicationRequirements(jobDescriptionText);
+  const effortLevel = getEffortLevel(applicationRequirements);
+  const strongMatches = getStrongMatches(allSkillMatches, roleTypes);
   const recommendation = getRecommendation(score, {
-    applicationRequirements: [],
-    companyType: 'Unknown',
-    effortLevel: 'Low',
+    applicationRequirements,
+    companyType,
+    effortLevel,
     interviewChance: estimatedInterviewChance,
-    opportunityQuality: 'Medium',
+    opportunityQuality,
+    strongMatchCount: strongMatches.length,
   });
 
   const missingItems = missingRequired
@@ -1208,7 +1516,6 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     concerns.push('Market conditions may lower interview odds even though the resume fit is strong.');
   }
 
-  const strongMatches = getStrongMatches(allSkillMatches, roleTypes);
   const competitionSummary = marketContext.factors.join(', ');
 
   return {
@@ -1217,11 +1524,12 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     estimatedInterviewChance,
     marketCompetition: marketContext.marketCompetition,
     jobLogistics: 'Not specified',
-    companyType: 'Unknown',
-    opportunityQuality: 'Medium',
+    employmentType: extractEmploymentType(jobDescriptionText) ?? undefined,
+    companyType,
+    opportunityQuality,
     strongMatches,
-    applicationRequirements: [],
-    effortLevel: 'Low',
+    applicationRequirements,
+    effortLevel,
     criticalGaps,
     specializedGaps: specializedGaps.length ? specializedGaps : ['No specialized platform/domain gaps detected from the current text'],
     missingSkills: missingSkills.length ? missingSkills : ['No major missing technologies detected from the current text'],

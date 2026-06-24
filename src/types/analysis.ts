@@ -1,12 +1,28 @@
-export type Recommendation = 'Strong Apply ✅' | 'Apply ✅' | 'Borderline ⚠️' | 'Skip ❌' | 'Hard Skip ❌❌';
+export type Recommendation = 'Strong Apply ✅' | 'Apply ✅' | 'Skip ❌' | 'Hard Skip ❌❌';
 
 export type MarketCompetition = 'Low' | 'Medium' | 'High' | 'Very High';
 
-export type CompanyType = 'Direct Employer' | 'Staffing Agency' | 'Consulting' | 'Startup' | 'Unknown';
+export type CompanyType =
+  | 'Direct Employer'
+  | 'Staffing Agency'
+  | 'Talent Network'
+  | 'Suspicious Posting'
+  | 'Consulting'
+  | 'Startup'
+  | 'Unknown';
 
 export type OpportunityQuality = 'High' | 'Medium' | 'Low';
 
 export type EffortLevel = 'Low' | 'Medium' | 'High' | 'Very High';
+
+export type EmploymentType =
+  | 'Full-Time'
+  | 'Part-Time'
+  | 'Contract'
+  | 'Part-Time Contract'
+  | 'Full-Time Contract'
+  | 'Contract-to-Hire'
+  | 'Internship';
 
 export type StrongMatch = {
   label: string;
@@ -18,6 +34,7 @@ export type AnalysisResult = {
   estimatedInterviewChance: string;
   marketCompetition: MarketCompetition;
   jobLogistics: string;
+  employmentType?: EmploymentType;
   companyType: CompanyType;
   opportunityQuality: OpportunityQuality;
   strongMatches: StrongMatch[];

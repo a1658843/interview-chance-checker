@@ -1,8 +1,10 @@
 import { clampScore, getRecommendation } from './scoring';
+import { extractEmploymentType } from './employmentType';
 import type {
   AnalysisResult,
   CompanyType,
   EffortLevel,
+  EmploymentType,
   MarketCompetition,
   OpportunityQuality,
   StrongMatch,
@@ -20,6 +22,7 @@ type ApiAnalysisResult = {
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
   jobLogistics?: unknown;
+  employmentType?: unknown;
   companyType?: unknown;
   opportunityQuality?: unknown;
   strongMatches?: unknown;
@@ -37,18 +40,40 @@ type ApiAnalysisResult = {
 };
 
 const marketCompetitionLevels: MarketCompetition[] = ['Low', 'Medium', 'High', 'Very High'];
-const companyTypes: CompanyType[] = ['Direct Employer', 'Staffing Agency', 'Consulting', 'Startup', 'Unknown'];
+const companyTypes: CompanyType[] = [
+  'Direct Employer',
+  'Staffing Agency',
+  'Talent Network',
+  'Suspicious Posting',
+  'Consulting',
+  'Startup',
+  'Unknown',
+];
 const opportunityQualities: OpportunityQuality[] = ['High', 'Medium', 'Low'];
 const effortLevelValues: EffortLevel[] = ['Low', 'Medium', 'High', 'Very High'];
+const employmentTypeValues: EmploymentType[] = [
+  'Full-Time',
+  'Part-Time',
+  'Contract',
+  'Part-Time Contract',
+  'Full-Time Contract',
+  'Contract-to-Hire',
+  'Internship',
+];
 const allowedApplicationRequirements = new Set([
+  'AI Interview Required',
   'Coding Challenge Required',
-  'Take-home Project Required',
   'Video Submission Required',
-  'Portfolio Required',
+  'Take-Home Project Required',
+  'Portfolio Submission Required',
   'Multi-hour Assessment Required',
   'Work Sample Required',
   'Extra Platform Registration Required',
   'Onsite Interview Required',
+]);
+const applicationRequirementAliases = new Map([
+  ['Take-home Project Required', 'Take-Home Project Required'],
+  ['Portfolio Required', 'Portfolio Submission Required'],
 ]);
 
 function stringArray(value: unknown) {
@@ -84,7 +109,9 @@ function strongMatches(value: unknown): StrongMatch[] {
 }
 
 function applicationRequirements(value: unknown) {
-  return stringArray(value).filter((item) => allowedApplicationRequirements.has(item));
+  return stringArray(value)
+    .map((item) => applicationRequirementAliases.get(item) ?? item)
+    .filter((item) => allowedApplicationRequirements.has(item));
 }
 
 function effortLevel(value: unknown, requirements: string[]): EffortLevel {
@@ -95,7 +122,7 @@ function effortLevel(value: unknown, requirements: string[]): EffortLevel {
   const majorSteps = requirements.filter((requirement) =>
     [
       'Coding Challenge Required',
-      'Take-home Project Required',
+      'Take-Home Project Required',
       'Multi-hour Assessment Required',
       'Video Submission Required',
       'Work Sample Required',
@@ -104,6 +131,7 @@ function effortLevel(value: unknown, requirements: string[]): EffortLevel {
 
   if (
     requirements.includes('Multi-hour Assessment Required') ||
+    requirements.includes('AI Interview Required') ||
     (requirements.includes('Coding Challenge Required') && requirements.includes('Video Submission Required')) ||
     majorSteps.length >= 2
   ) {
@@ -112,7 +140,7 @@ function effortLevel(value: unknown, requirements: string[]): EffortLevel {
 
   if (
     requirements.includes('Coding Challenge Required') ||
-    requirements.includes('Take-home Project Required')
+    requirements.includes('Take-Home Project Required')
   ) {
     return 'High';
   }
@@ -136,6 +164,10 @@ function companyType(value: unknown): CompanyType {
 
 function opportunityQuality(value: unknown): OpportunityQuality {
   return opportunityQualities.includes(value as OpportunityQuality) ? (value as OpportunityQuality) : 'Medium';
+}
+
+function mapEmploymentType(value: unknown): EmploymentType | undefined {
+  return employmentTypeValues.includes(value as EmploymentType) ? (value as EmploymentType) : undefined;
 }
 
 function score(value: unknown) {
@@ -176,6 +208,12 @@ export async function analyzeWithApi(
   const mappedCompanyType = companyType(data.companyType);
   const mappedOpportunityQuality = opportunityQuality(data.opportunityQuality);
   const mappedInterviewChance = text(data.interviewChance ?? data.estimatedInterviewChance, 'Unavailable');
+  const mappedStrongMatches = strongMatches(data.strongMatches);
+  const mappedCriticalGaps = stringArray(data.criticalGaps);
+  const mappedReasoning = text(
+    data.shortReasoning ?? data.reasoning,
+    'The analysis completed, but no reasoning was returned.',
+  );
 
   return {
     jobFitScore: mappedScore,
@@ -185,25 +223,25 @@ export async function analyzeWithApi(
       effortLevel: mappedEffortLevel,
       interviewChance: mappedInterviewChance,
       opportunityQuality: mappedOpportunityQuality,
+      reasoning: [mappedReasoning, ...mappedCriticalGaps].join(' '),
+      strongMatchCount: mappedStrongMatches.length,
     }),
     estimatedInterviewChance: mappedInterviewChance,
     marketCompetition: marketCompetition(data.marketCompetition),
     jobLogistics: text(data.jobLogistics, 'Not specified'),
+    employmentType: mapEmploymentType(data.employmentType) ?? extractEmploymentType(jobDescriptionText) ?? undefined,
     companyType: mappedCompanyType,
     opportunityQuality: mappedOpportunityQuality,
-    strongMatches: strongMatches(data.strongMatches),
+    strongMatches: mappedStrongMatches,
     applicationRequirements: mappedApplicationRequirements,
     effortLevel: mappedEffortLevel,
-    criticalGaps: stringArray(data.criticalGaps),
+    criticalGaps: mappedCriticalGaps,
     specializedGaps: stringArray(data.specializedGaps),
     missingSkills: stringArray(data.missingSkills),
     missingSignals: stringArray(data.missingSignals),
     chanceReasons: stringArray(data.whyChanceIsNotHigher),
     competitionFactors: stringArray(data.competitionFactors),
     resumeImprovements: stringArray(data.topImprovements),
-    reasoning: text(
-      data.shortReasoning ?? data.reasoning,
-      'The analysis completed, but no reasoning was returned.',
-    ),
+    reasoning: mappedReasoning,
   };
 }

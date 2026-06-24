@@ -37,6 +37,28 @@ function ListSection({ title, icon: Icon, items }: ListSectionProps) {
   );
 }
 
+function getDisplayedApplicationRequirements(requirements: string[]) {
+  const priority = [
+    'AI Interview Required',
+    'Coding Challenge Required',
+    'Video Submission Required',
+    'Take-Home Project Required',
+    'Portfolio Submission Required',
+    'Extra Platform Registration Required',
+  ];
+  const requirementSet = new Set(
+    requirements.map((requirement) =>
+      requirement === 'Take-home Project Required'
+        ? 'Take-Home Project Required'
+        : requirement === 'Portfolio Required'
+          ? 'Portfolio Submission Required'
+          : requirement,
+    ),
+  );
+
+  return priority.filter((requirement) => requirementSet.has(requirement)).slice(0, 3);
+}
+
 export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPanelProps) {
   if (inputError) {
     return (
@@ -60,6 +82,8 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
     );
   }
 
+  const displayedApplicationRequirements = getDisplayedApplicationRequirements(result.applicationRequirements);
+
   return (
     <section className="space-y-4">
       {analysisWarning ? (
@@ -70,19 +94,12 @@ export function ResultsPanel({ result, inputError, analysisWarning }: ResultsPan
           </div>
         </article>
       ) : null}
+      <ListSection
+        title="Additional Application Steps Detected"
+        icon={CircleAlert}
+        items={displayedApplicationRequirements}
+      />
       <ScoreCard result={result} />
-      <article className="rounded-lg border border-slate-200 bg-white p-4 shadow-sm">
-        <div className="grid gap-3 text-sm sm:grid-cols-2">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Company Type</p>
-            <p className="mt-1 font-semibold text-slate-800">{result.companyType}</p>
-          </div>
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">Opportunity Quality</p>
-            <p className="mt-1 font-semibold text-slate-800">{result.opportunityQuality}</p>
-          </div>
-        </div>
-      </article>
       <article className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
         <h3 className="text-base font-semibold text-slate-950">Short Reasoning</h3>
         <p className="mt-3 text-sm leading-6 text-slate-700">{result.reasoning}</p>

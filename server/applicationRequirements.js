@@ -1,8 +1,9 @@
 export const allowedApplicationRequirements = [
+  'AI Interview Required',
   'Coding Challenge Required',
-  'Take-home Project Required',
   'Video Submission Required',
-  'Portfolio Required',
+  'Take-Home Project Required',
+  'Portfolio Submission Required',
   'Multi-hour Assessment Required',
   'Work Sample Required',
   'Extra Platform Registration Required',
@@ -12,8 +13,28 @@ export const allowedApplicationRequirements = [
 export const effortLevels = ['Low', 'Medium', 'High', 'Very High'];
 
 const allowedRequirementSet = new Set(allowedApplicationRequirements);
+const requirementAliases = new Map([
+  ['Take-home Project Required', 'Take-Home Project Required'],
+  ['Portfolio Required', 'Portfolio Submission Required'],
+]);
 
 const requirementPatterns = [
+  {
+    requirement: 'AI Interview Required',
+    patterns: [
+      /\bai\b[^.\n]{0,80}\binterview\b/i,
+      /\bai[-\s]?based\b[^.\n]{0,80}\binterview\b/i,
+      /\bartificial intelligence\b[^.\n]{0,80}\binterview\b/i,
+      /\bautomated\b[^.\n]{0,80}\binterview\b/i,
+      /\bcomplete\b[^.\n]{0,80}\bai\b[^.\n]{0,80}\binterview\b/i,
+      /\bai\b[^.\n]{0,40}\bscreening\b[^.\n]{0,40}\binterview\b/i,
+      /\bai\b[^.\n]{0,40}\brecruiter\b[^.\n]{0,40}\binterview\b/i,
+      /\bchatbot\b[^.\n]{0,80}\binterview\b/i,
+      /\brecorded\b[^.\n]{0,40}\bai\b[^.\n]{0,40}\binterview\b/i,
+      /\binterview\b[^.\n]{0,80}\bbased on your resume\b/i,
+      /\binterview\b[^.\n]{0,80}\b(?:ai|artificial intelligence|automated)\b/i,
+    ],
+  },
   {
     requirement: 'Coding Challenge Required',
     patterns: [
@@ -25,7 +46,7 @@ const requirementPatterns = [
     ],
   },
   {
-    requirement: 'Take-home Project Required',
+    requirement: 'Take-Home Project Required',
     patterns: [/\btake[-\s]?home\b/i, /\bhome assignment\b/i, /\bassessment project\b/i],
   },
   {
@@ -38,7 +59,7 @@ const requirementPatterns = [
     ],
   },
   {
-    requirement: 'Portfolio Required',
+    requirement: 'Portfolio Submission Required',
     patterns: [/\bportfolio required\b/i, /\bsubmit\b[^.\n]{0,80}\bportfolio\b/i],
   },
   {
@@ -84,6 +105,7 @@ export function normalizeApplicationRequirements(value) {
     value
       .filter((item) => typeof item === 'string')
       .map((item) => item.trim())
+      .map((item) => requirementAliases.get(item) ?? item)
       .filter((item) => allowedRequirementSet.has(item)),
   );
 }
@@ -99,8 +121,9 @@ export function getEffortLevel(applicationRequirements) {
   const requirements = normalizeApplicationRequirements(applicationRequirements);
   const majorSteps = requirements.filter((requirement) =>
     [
+      'AI Interview Required',
       'Coding Challenge Required',
-      'Take-home Project Required',
+      'Take-Home Project Required',
       'Multi-hour Assessment Required',
       'Video Submission Required',
       'Work Sample Required',
@@ -108,6 +131,7 @@ export function getEffortLevel(applicationRequirements) {
   );
 
   if (
+    requirements.includes('AI Interview Required') ||
     requirements.includes('Multi-hour Assessment Required') ||
     (requirements.includes('Coding Challenge Required') && requirements.includes('Video Submission Required')) ||
     majorSteps.length >= 2
@@ -117,14 +141,14 @@ export function getEffortLevel(applicationRequirements) {
 
   if (
     requirements.includes('Coding Challenge Required') ||
-    requirements.includes('Take-home Project Required')
+    requirements.includes('Take-Home Project Required')
   ) {
     return 'High';
   }
 
   if (
     requirements.includes('Video Submission Required') ||
-    requirements.includes('Portfolio Required') ||
+    requirements.includes('Portfolio Submission Required') ||
     requirements.includes('Work Sample Required') ||
     requirements.includes('Extra Platform Registration Required') ||
     requirements.includes('Onsite Interview Required')

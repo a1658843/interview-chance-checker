@@ -1,10 +1,12 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { ArrowRight, RotateCcw, Target } from 'lucide-react';
 import { TextInputPanel } from './components/TextInputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { analyzeMatch } from './lib/analyzeMatch';
 import { analyzeWithApi } from './lib/apiAnalysis';
-import { jobDescriptionLooksLikeResume } from './lib/validation';
+import { extractApplicationRequirements, getEffortLevel } from './lib/applicationRequirements';
+import { extractEmploymentType } from './lib/employmentType';
+import { validateAnalysisInputs } from './lib/validation';
 import type { AnalysisResult } from './types/analysis';
 
 function App() {
@@ -17,14 +19,38 @@ function App() {
 
   const canAnalyze = resumeText.trim().length > 0 && jobDescriptionText.trim().length > 0 && !isAnalyzing;
 
+  useEffect(() => {
+    if (result) {
+      console.log('FINAL_RESULT', result);
+      console.log('FINAL_RESULT.employmentType', result.employmentType);
+      console.log('FINAL_RESULT_JSON', JSON.stringify(result));
+    }
+  }, [result]);
+
+  function ensureDecisionSignals(analysis: AnalysisResult) {
+    const applicationRequirements = Array.from(
+      new Set([...analysis.applicationRequirements, ...extractApplicationRequirements(jobDescriptionText)]),
+    );
+
+    return {
+      ...analysis,
+      applicationRequirements,
+      effortLevel: getEffortLevel(applicationRequirements),
+      employmentType: analysis.employmentType ?? extractEmploymentType(jobDescriptionText) ?? undefined,
+    };
+  }
+
   async function handleAnalyze() {
     if (!canAnalyze) {
       return;
     }
 
-    if (jobDescriptionLooksLikeResume(jobDescriptionText)) {
+    const validationError = validateAnalysisInputs(resumeText, jobDescriptionText);
+
+    if (validationError) {
       setResult(null);
-      setInputError('The Job Description field appears to contain resume content instead of a job posting.');
+      setInputError(validationError);
+      setAnalysisWarning(null);
       return;
     }
 
@@ -33,9 +59,9 @@ function App() {
     setIsAnalyzing(true);
 
     try {
-      setResult(await analyzeWithApi(resumeText, jobDescriptionText));
+      setResult(ensureDecisionSignals(await analyzeWithApi(resumeText, jobDescriptionText)));
     } catch {
-      setResult(analyzeMatch(resumeText, jobDescriptionText));
+      setResult(ensureDecisionSignals(analyzeMatch(resumeText, jobDescriptionText)));
       setAnalysisWarning('LLM analysis is unavailable right now, so this result uses the local heuristic fallback.');
     } finally {
       setIsAnalyzing(false);
