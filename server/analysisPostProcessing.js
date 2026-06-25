@@ -156,14 +156,6 @@ function classifyEmployerType(jobDescriptionText) {
   const text = String(jobDescriptionText ?? '');
 
   if (
-    /\b(talent network|talent community|join our network|future opportunities|matching platform|candidate marketplace|talent pool|build your profile|create candidate account|future matching opportunities|workerbee|crossing hurdles)\b/i.test(
-      text,
-    )
-  ) {
-    return 'Talent Network';
-  }
-
-  if (
     /\b(stealth startup|confidential company|no company identity|company confidential|unrealistic compensation|minimal company information|generic responsibilities)\b/i.test(
       text,
     )
@@ -172,11 +164,19 @@ function classifyEmployerType(jobDescriptionText) {
   }
 
   if (
-    /\b(dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client)\b/i.test(
+    /\b(crossing hurdles|dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client)\b/i.test(
       text,
     )
   ) {
     return 'Staffing Agency';
+  }
+
+  if (
+    /\b(talent network|talent community|join our network|future opportunities|matching platform|candidate marketplace|talent pool|build your profile|create candidate account|future matching opportunities|workerbee)\b/i.test(
+      text,
+    )
+  ) {
+    return 'Talent Network';
   }
 
   return null;
@@ -942,6 +942,47 @@ function hasRecommendationQualityContradiction(analysis) {
   return analysis?.recommendation === 'Strong Apply ✅' && analysis?.opportunityQuality === 'Low';
 }
 
+function getEmployerTypeReasoningSentence(analysis) {
+  if (analysis?.companyType === 'Staffing Agency') {
+    return 'The staffing/recruiting layer lowers conversion odds because the resume usually has to pass an agency screen before reaching the client.';
+  }
+
+  if (analysis?.companyType === 'Talent Network') {
+    return 'The candidate pool or marketplace model lowers conversion odds because matching to a real hiring-manager screen is an extra step.';
+  }
+
+  if (analysis?.companyType === 'Suspicious Posting') {
+    return 'Posting quality and credibility concerns lower expected conversion even if the technical fit is usable.';
+  }
+
+  return '';
+}
+
+function hasEmployerTypeReasoning(analysis) {
+  const reasoning = String(analysis?.shortReasoning ?? '').toLowerCase();
+
+  if (analysis?.companyType === 'Staffing Agency') {
+    return /\b(staffing|recruiting|recruiter|agency|client)\b/i.test(reasoning);
+  }
+
+  if (analysis?.companyType === 'Talent Network') {
+    return /\b(candidate pool|talent pool|marketplace|matching|talent network|hiring-manager screen)\b/i.test(reasoning);
+  }
+
+  if (analysis?.companyType === 'Suspicious Posting') {
+    return /\b(posting quality|credibility|suspicious|stealth|low[- ]quality|unclear posting)\b/i.test(reasoning);
+  }
+
+  return true;
+}
+
+function missingEmployerTypeReasoning(analysis) {
+  return (
+    ['Staffing Agency', 'Talent Network', 'Suspicious Posting'].includes(analysis?.companyType) &&
+    !hasEmployerTypeReasoning(analysis)
+  );
+}
+
 function hasLevelMismatchScoreContradiction(analysis) {
   return ['Large', 'Severe'].includes(analysis?.levelGap) && Number(analysis?.fitScore ?? 0) > 7;
 }
@@ -1017,6 +1058,7 @@ function hasFinalConsistencyIssue(analysis, { resumeText, jobDescriptionText }) 
     hasUnsupportedPositiveSkillClaim(analysis, resumeText) ||
     treatsPreferredOnlyGapAsBlocker(analysis, jobDescriptionText) ||
     hasRecommendationQualityContradiction(analysis) ||
+    missingEmployerTypeReasoning(analysis) ||
     hasLevelMismatchScoreContradiction(analysis) ||
     hasLevelMismatchRecommendationContradiction(analysis) ||
     hasLevelMismatchReasoningIssue(analysis) ||
@@ -1219,6 +1261,11 @@ function getReasoningSentenceLimit(recommendation) {
   return 3;
 }
 
+function withEmployerTypeReasoning(reasoning, analysis) {
+  const employerSentence = getEmployerTypeReasoningSentence(analysis);
+  return employerSentence ? `${reasoning} ${employerSentence}` : reasoning;
+}
+
 function buildConsistentReasoning(analysis) {
   const recommendationType = getRecommendationType(analysis.recommendation);
   const hasExperienceGate = ['Hard Gap', 'Severe Gap'].includes(analysis.experienceGate);
@@ -1253,33 +1300,57 @@ function buildConsistentReasoning(analysis) {
 
   if (recommendationType === 'Apply') {
     if (hasEducationGate) {
-      return 'Apply because the role has some overlap, but the required degree is not demonstrated by the resume.';
+      return withEmployerTypeReasoning(
+        'Apply because the role has some overlap, but the required degree is not demonstrated by the resume.',
+        analysis,
+      );
     }
 
     if (hasExperienceGate || hasLevelMismatch) {
-      return 'Apply because the core stack has some overlap, but the experience level is the main concern.';
+      return withEmployerTypeReasoning(
+        'Apply because the core stack has some overlap, but the experience level is the main concern.',
+        analysis,
+      );
     }
 
     if (hasCriticalGaps) {
-      return 'Apply because the role has useful overlap, but one core requirement creates a meaningful gap.';
+      return withEmployerTypeReasoning(
+        'Apply because the role has useful overlap, but one core requirement creates a meaningful gap.',
+        analysis,
+      );
     }
 
-    return 'Apply because the expected return is not strong enough to prioritize.';
+    return withEmployerTypeReasoning(
+      'Apply because the expected return is not strong enough to prioritize.',
+      analysis,
+    );
   }
 
   if (recommendationType === 'Strong Apply') {
     if (hasStrongMatches && !hasCriticalGaps) {
-      return 'This role stands out because the resume aligns closely with the core work and shows unusually few decision-changing gaps.';
+      return withEmployerTypeReasoning(
+        'This role stands out because the resume aligns closely with the core work and shows unusually few decision-changing gaps.',
+        analysis,
+      );
     }
 
-    return 'This role stands out because the strongest parts of the resume map directly to the main work.';
+    return withEmployerTypeReasoning(
+      'This role stands out because the strongest parts of the resume map directly to the main work.',
+      analysis,
+    );
   }
 
   if (hasStrongMatches && hasCriticalGaps) {
-    return 'The main work is reasonably aligned, but one important gap keeps this from being a higher-priority application.';
+    return withEmployerTypeReasoning(
+      'The main work is reasonably aligned, but one important gap keeps this from being a higher-priority application.',
+      analysis,
+    );
   }
 
-  return 'The role is worth a normal application because the core work appears reasonably aligned.';
+  return withEmployerTypeReasoning(
+    'The role is worth a normal application because the core work appears reasonably aligned.',
+    analysis,
+  );
 }
 
 function hasUxReasoningIssue(analysis) {

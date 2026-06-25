@@ -204,7 +204,7 @@ test('Workerbee talent network is detected and interview chance is capped', () =
   assert.equal(result.interviewChance, '3-7%');
 });
 
-test('Crossing Hurdles talent marketplace is detected as a talent network', () => {
+test('Crossing Hurdles-style posting is detected as staffing agency', () => {
   const result = applyOpportunityQualityGuardrails(
     {
       companyType: 'Unknown',
@@ -217,9 +217,9 @@ test('Crossing Hurdles talent marketplace is detected as a talent network', () =
     `,
   );
 
-  assert.equal(result.companyType, 'Talent Network');
-  assert.equal(result.opportunityQuality, 'Medium');
-  assert.equal(result.interviewChance, '3-7%');
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.opportunityQuality, 'Low');
+  assert.equal(result.interviewChance, '5-10%');
 });
 
 test('stealth startup posting is detected as suspicious and interview chance is capped', () => {
@@ -256,6 +256,92 @@ test('Dice-style recruiter posting is detected as staffing agency and interview 
   assert.equal(result.companyType, 'Staffing Agency');
   assert.equal(result.opportunityQuality, 'Medium');
   assert.equal(result.interviewChance, '5-10%');
+});
+
+test('Crossing Hurdles staffing agency chance is capped and final reasoning mentions recruiting layer', () => {
+  const jd = `
+    Crossing Hurdles recruiting agency posting for a client seeking a Software Engineer.
+    This staffing partner role requires React, Python, AWS, and SQL.
+    The client project includes API development, frontend delivery, and cloud deployment.
+  `;
+  const guarded = applyOpportunityQualityGuardrails(
+    {
+      fitScore: 8.5,
+      recommendation: APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['React', 'Python', 'AWS', 'SQL'],
+      criticalGaps: [],
+      shortReasoning: 'The candidate has strong technical overlap with the role.',
+    },
+    jd,
+  );
+  const repaired = applyFinalConsistencyRepair(guarded, {
+    resumeText: 'React Python AWS SQL',
+    jobDescriptionText: jd,
+  });
+
+  assert.equal(repaired.companyType, 'Staffing Agency');
+  assert.equal(repaired.recommendation, APPLY);
+  assert.equal(repaired.interviewChance, '5-10%');
+  assert.match(repaired.shortReasoning, /staffing|recruiting|agency|client/i);
+});
+
+test('Workerbee talent marketplace chance is capped lower than staffing and reasoning mentions candidate pool', () => {
+  const jd = `
+    Workerbee Software Engineer Talent Network.
+    Join our network and build your profile for future matching opportunities through our candidate marketplace.
+    Companies in the network often seek React, Python, AWS, and SQL engineers.
+  `;
+  const guarded = applyOpportunityQualityGuardrails(
+    {
+      fitScore: 8.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['React', 'Python', 'AWS', 'SQL'],
+      criticalGaps: [],
+      shortReasoning: 'The candidate has strong technical overlap with the role.',
+    },
+    jd,
+  );
+  const repaired = applyFinalConsistencyRepair(
+    {
+      ...guarded,
+      recommendation: APPLY,
+    },
+    {
+      resumeText: 'React Python AWS SQL',
+      jobDescriptionText: jd,
+    },
+  );
+
+  assert.equal(repaired.companyType, 'Talent Network');
+  assert.equal(repaired.recommendation, APPLY);
+  assert.equal(repaired.interviewChance, '3-7%');
+  assert.match(repaired.shortReasoning, /candidate pool|marketplace|matching/i);
+});
+
+test('direct employer keeps interview chance unchanged', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      interviewChance: '8-15%',
+    },
+    `
+      Direct employer product engineering role.
+      The team builds customer software and needs React, Python, AWS, and SQL.
+      Responsibilities include API development, frontend delivery, and cloud deployment.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Direct Employer');
+  assert.equal(result.interviewChance, '8-15%');
 });
 
 test('short reasoning removes unsupported skill claims', () => {

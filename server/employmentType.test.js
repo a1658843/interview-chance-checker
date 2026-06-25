@@ -28,6 +28,53 @@ test('detects explicit contract employment type', () => {
   );
 });
 
+test('LinkedIn full-time metadata overrides operational contract language', () => {
+  assert.equal(
+    extractEmploymentType(`
+      Remote
+      Full-time
+
+      The period of performance for this contract expires in 2027.
+      Responsibilities include delivery support and customer implementation work.
+    `),
+    'Full-Time',
+  );
+});
+
+test('explicit employment or position type contract remains contract', () => {
+  assert.equal(
+    extractEmploymentType('Position Type: Contract'),
+    'Contract',
+  );
+  assert.equal(
+    extractEmploymentType('Employment Type: Contract'),
+    'Contract',
+  );
+});
+
+test('LinkedIn full-time metadata overrides government contract body references', () => {
+  assert.equal(
+    extractEmploymentType(`
+      Remote
+      Full-time
+
+      Support government contract programs and contract lifecycle reporting.
+    `),
+    'Full-Time',
+  );
+});
+
+test('business contract references alone are not employment type signals', () => {
+  assert.equal(
+    extractEmploymentType('Support government contract programs and customer contracts.'),
+    null,
+  );
+  assert.equal(
+    extractEmploymentType('The period of performance for this contract expires in 2027.'),
+    null,
+  );
+});
+
 test('detects combined part-time or full-time contract employment type', () => {
   assert.equal(
     extractEmploymentType('LinkedIn header: Part-time\nType: Contract'),

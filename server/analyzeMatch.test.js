@@ -47,6 +47,11 @@ function analyze(jobDescription, resumeText = baseResume) {
   return analyzeMatch(resumeText, jobDescription);
 }
 
+function interviewChanceUpperBound(interviewChance) {
+  const matches = [...String(interviewChance ?? '').matchAll(/\d+(?:\.\d+)?/g)].map((match) => Number(match[0]));
+  return matches.length ? Math.max(...matches) : 0;
+}
+
 test('React OR Angular OR Vue is satisfied by React without Angular or Vue gaps', () => {
   const result = analyze(`
     Frontend Software Engineer
@@ -130,7 +135,7 @@ test('BravoTran-style soft example stack does not create critical gaps or skip',
   assert.ok(result.jobFitScore >= 6);
 });
 
-test('Workerbee talent network downgrades recommendation without changing strong technical fit', () => {
+test('Workerbee talent marketplace caps Strong Apply at Apply and explains marketplace conversion risk', () => {
   const result = analyze(`
     Workerbee Software Engineer Talent Network
     Join our network and build your profile for future opportunities through our matching platform.
@@ -141,11 +146,12 @@ test('Workerbee talent network downgrades recommendation without changing strong
   assert.equal(result.companyType, 'Talent Network');
   assert.equal(result.opportunityQuality, 'Medium');
   assert.equal(result.estimatedInterviewChance, '3-7%');
+  assert.match(result.reasoning, /candidate pool|marketplace|matching/i);
   assert.ok(result.jobFitScore >= 8);
   assert.equal(result.recommendation, 'Apply ✅');
 });
 
-test('Crossing Hurdles talent marketplace is treated as a talent network', () => {
+test('Crossing Hurdles-style staffing agency lowers interview chance but keeps Apply for strong fit', () => {
   const result = analyze(`
     Crossing Hurdles Candidate Marketplace
     Create candidate account details to join our talent pool for future matching opportunities.
@@ -153,9 +159,20 @@ test('Crossing Hurdles talent marketplace is treated as a talent network', () =>
     Work may involve API development, frontend delivery, and cloud deployment.
   `);
 
-  assert.equal(result.companyType, 'Talent Network');
+  assert.equal(result.companyType, 'Staffing Agency');
   assert.equal(result.opportunityQuality, 'Medium');
-  assert.equal(result.estimatedInterviewChance, '3-7%');
+  assert.equal(result.estimatedInterviewChance, '5-10%');
+  assert.ok(
+    interviewChanceUpperBound(result.estimatedInterviewChance) <
+      interviewChanceUpperBound(
+        analyze(`
+          Direct employer Software Engineer.
+          This product engineering role requires Python, React, SQL, and AWS.
+          The team project includes API development, frontend delivery, and cloud deployment.
+        `).estimatedInterviewChance,
+      ),
+  );
+  assert.match(result.reasoning, /staffing|recruiting|agency|client/i);
   assert.equal(result.recommendation, 'Apply ✅');
 });
 
@@ -172,6 +189,19 @@ test('stealth startup posting is marked suspicious and downgraded one level', ()
   assert.equal(result.estimatedInterviewChance, '3-7%');
   assert.ok(result.jobFitScore >= 6);
   assert.equal(result.recommendation, 'Apply ✅');
+});
+
+test('direct employer keeps normal interview chance without employer-type penalty', () => {
+  const result = analyze(`
+    Direct employer Software Engineer.
+    This product engineering role requires Python, React, SQL, and AWS.
+    The team project includes API development, frontend delivery, and cloud deployment.
+  `);
+
+  assert.equal(result.companyType, 'Direct Employer');
+  assert.equal(result.opportunityQuality, 'High');
+  assert.equal(result.estimatedInterviewChance, '10-20%');
+  assert.equal(result.recommendation.startsWith('Strong Apply'), true);
 });
 
 test('Dice-style recruiter posting keeps Apply but caps interview chance', () => {

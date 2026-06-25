@@ -1278,25 +1278,6 @@ function capInterviewChance(interviewChance: string, cap: string) {
 function classifyEmployerType(jobText: string): AnalysisResult['companyType'] {
   if (
     includesAny(jobText, [
-      'talent network',
-      'talent community',
-      'join our network',
-      'future opportunities',
-      'matching platform',
-      'candidate marketplace',
-      'talent pool',
-      'build your profile',
-      'create candidate account',
-      'future matching opportunities',
-      'workerbee',
-      'crossing hurdles',
-    ])
-  ) {
-    return 'Talent Network';
-  }
-
-  if (
-    includesAny(jobText, [
       'stealth startup',
       'confidential company',
       'no company identity',
@@ -1310,6 +1291,7 @@ function classifyEmployerType(jobText: string): AnalysisResult['companyType'] {
 
   if (
     includesAny(jobText, [
+      'crossing hurdles',
       'dice',
       'recruiter',
       'recruiting firm',
@@ -1325,6 +1307,24 @@ function classifyEmployerType(jobText: string): AnalysisResult['companyType'] {
     ])
   ) {
     return 'Staffing Agency';
+  }
+
+  if (
+    includesAny(jobText, [
+      'talent network',
+      'talent community',
+      'join our network',
+      'future opportunities',
+      'matching platform',
+      'candidate marketplace',
+      'talent pool',
+      'build your profile',
+      'create candidate account',
+      'future matching opportunities',
+      'workerbee',
+    ])
+  ) {
+    return 'Talent Network';
   }
 
   if (includesAny(jobText, ['consulting', 'client services', 'implementation partner'])) {
@@ -1357,6 +1357,22 @@ function adjustInterviewChanceForEmployerType(
   if (companyType === 'Talent Network') return capInterviewChance(interviewChance, '3-7%');
   if (companyType === 'Suspicious Posting') return capInterviewChance(interviewChance, '3-7%');
   return interviewChance;
+}
+
+function getEmployerTypeReasoning(companyType: AnalysisResult['companyType']) {
+  if (companyType === 'Staffing Agency') {
+    return 'The staffing/recruiting layer lowers conversion odds because the resume usually has to pass an agency screen before reaching the client.';
+  }
+
+  if (companyType === 'Talent Network') {
+    return 'The candidate pool or marketplace model lowers conversion odds because matching to a real hiring-manager screen is an extra step.';
+  }
+
+  if (companyType === 'Suspicious Posting') {
+    return 'Posting quality and credibility concerns lower expected conversion even though the resume-to-role fit is scored separately.';
+  }
+
+  return '';
 }
 
 function getStrongMatchPriority(label: string, roleTypes: RoleType[]) {
@@ -1517,6 +1533,11 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
   }
 
   const competitionSummary = marketContext.factors.join(', ');
+  const employerTypeReasoning = getEmployerTypeReasoning(companyType);
+  const baseReasoning =
+    score < 6
+      ? `This looks like a weaker fit because the resume is missing enough evidence-backed overlap with the role requirements. Critical requirements are weighted heavily, and multiple critical gaps cap the fit score. Benefits and compensation sections are ignored so the score focuses on job fit. Market competition is ${marketContext.marketCompetition.toLowerCase()} based on ${competitionSummary}.`
+      : `This looks like a strong fit because the resume has evidence-backed overlap with the role requirements, seniority expectations, and role type. The interview chance is lower or higher based on market factors separately from fit score; current competition is ${marketContext.marketCompetition.toLowerCase()} based on ${competitionSummary}.`;
 
   return {
     jobFitScore: score,
@@ -1534,16 +1555,15 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
     specializedGaps: specializedGaps.length ? specializedGaps : ['No specialized platform/domain gaps detected from the current text'],
     missingSkills: missingSkills.length ? missingSkills : ['No major missing technologies detected from the current text'],
     missingSignals: missingSignals.length ? missingSignals : ['No major missing experience patterns detected from the current text'],
-    chanceReasons: marketContext.chanceReasons,
+    chanceReasons: employerTypeReasoning
+      ? unique([...marketContext.chanceReasons, employerTypeReasoning])
+      : marketContext.chanceReasons,
     competitionFactors: marketContext.factors,
     resumeImprovements: [
       'Add concrete evidence bullets for the most important required skills.',
       'Quantify implementation, integration, backend, or database outcomes where possible.',
       'Move the strongest role-specific evidence closer to the top of the resume.',
     ],
-    reasoning:
-      score < 6
-        ? `This looks like a weaker fit because the resume is missing enough evidence-backed overlap with the role requirements. Critical requirements are weighted heavily, and multiple critical gaps cap the fit score. Benefits and compensation sections are ignored so the score focuses on job fit. Market competition is ${marketContext.marketCompetition.toLowerCase()} based on ${competitionSummary}.`
-        : `This looks like a strong fit because the resume has evidence-backed overlap with the role requirements, seniority expectations, and role type. The interview chance is lower or higher based on market factors separately from fit score; current competition is ${marketContext.marketCompetition.toLowerCase()} based on ${competitionSummary}.`,
+    reasoning: employerTypeReasoning ? `${baseReasoning} ${employerTypeReasoning}` : baseReasoning,
   };
 }
