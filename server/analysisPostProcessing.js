@@ -1,4 +1,4 @@
-import { isStrongMatchSupportedByResume } from './strongMatches.js';
+import { isStrongMatchSupportedByResume, normalizeStrongMatches } from './strongMatches.js';
 
 const unsupportedReasoningSkills = [
   'Node.js',
@@ -31,14 +31,148 @@ function normalizedWords(text) {
 }
 
 function hasPreferredLanguage(sentence) {
-  return /\b(preferred|nice[- ]to[- ]have|nice to have|bonus|bonus points?|plus|familiarity|exposure|knowledge of or interest in|interest in|technologies such as|ability to learn quickly|learn quickly|not candidates who already have experience with every technology)\b/i.test(sentence);
+  return /\b(preferred|desired|nice[- ]to[- ]have|nice to have|bonus|bonus points?|plus|familiarity|exposure|knowledge of or interest in|interest in|technologies such as|ability to learn quickly|learn quickly|not candidates who already have experience with every technology)\b/i.test(sentence);
 }
 
 function hasRequiredLanguage(sentence) {
   return /\b(required|requirement|requirements|must have|must-have|minimum qualifications|qualifications|you have|need)\b/i.test(sentence);
 }
 
+function getRequirementHeadingLevel(line) {
+  const heading = String(line ?? '')
+    .trim()
+    .replace(/^[-*•\s]+/, '')
+    .replace(/[:：]\s*$/, '');
+
+  if (
+    /^(preferred qualifications?|preferred skills?|preferred|nice[- ]to[- ]have|nice to have|pluses?|bonus points?|desired skills?(?: and experience)?|desired|ideal candidate|certifications? preferred|preferred certifications?)$/i.test(
+      heading,
+    )
+  ) {
+    if (/bonus|pluses?/i.test(heading)) return 'bonus';
+    if (/desired|ideal/i.test(heading)) return 'desired';
+    return 'preferred';
+  }
+
+  if (
+    /^(required qualifications?|requirements?|must haves?|minimum qualifications?|what you'?ll need|what you will need|qualifications?|what you bring|you have)$/i.test(
+      heading,
+    )
+  ) {
+    return 'required';
+  }
+
+  return null;
+}
+
+function splitHeadingAndRest(line) {
+  const value = String(line ?? '').trim();
+  const match = value.match(/^(.{2,80}?)(?::| - | – | — )\s*(.+)$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const level = getRequirementHeadingLevel(match[1]);
+  return level ? { level, rest: match[2].trim() } : null;
+}
+
+function getInlineRequirementLevel(sentence, sectionLevel) {
+  if (/\b(bonus|bonus points?|pluses?|extra credit)\b/i.test(sentence)) {
+    return 'bonus';
+  }
+
+  if (/\b(desired|ideal candidate)\b/i.test(sentence)) {
+    return 'desired';
+  }
+
+  if (hasPreferredLanguage(sentence)) {
+    return 'preferred';
+  }
+
+  if (['preferred', 'bonus', 'desired'].includes(sectionLevel)) {
+    return sectionLevel;
+  }
+
+  if (hasRequiredLanguage(sentence)) {
+    return 'required';
+  }
+
+  if (sectionLevel === 'required') {
+    return 'required';
+  }
+
+  return 'unknown';
+}
+
+function parseJobRequirementSentences(jobDescriptionText) {
+  const parsed = [];
+  let sectionLevel = 'unknown';
+
+  for (const rawLine of String(jobDescriptionText ?? '').split(/\r?\n/)) {
+    const trimmedLine = rawLine.trim();
+    if (!trimmedLine) {
+      continue;
+    }
+
+    const headingAndRest = splitHeadingAndRest(trimmedLine);
+    if (headingAndRest) {
+      sectionLevel = headingAndRest.level;
+      for (const sentence of splitSentences(headingAndRest.rest)) {
+        parsed.push({
+          sentence,
+          level: getInlineRequirementLevel(sentence, sectionLevel),
+        });
+      }
+      continue;
+    }
+
+    const isHeading =
+      trimmedLine.length < 100 &&
+      !/[.!?]$/.test(trimmedLine) &&
+      getEducationLevelFromText(trimmedLine) === null;
+    const headingLevel = isHeading ? getRequirementHeadingLevel(trimmedLine) : null;
+
+    if (headingLevel) {
+      sectionLevel = headingLevel;
+      continue;
+    }
+
+    for (const sentence of splitSentences(trimmedLine)) {
+      parsed.push({
+        sentence,
+        level: getInlineRequirementLevel(sentence, sectionLevel),
+      });
+    }
+  }
+
+  return parsed;
+}
+
 function sharesMeaningfulTerms(gap, sentence) {
+  const gapMentionsMasters = /\bmaster'?s?|masters|m\.?\s*s\.?|m\.?\s*eng\.?\b/i.test(gap);
+  const sentenceMentionsMasters = /\bmaster'?s?|masters|m\.?\s*s\.?|m\.?\s*eng\.?\b/i.test(sentence);
+  const gapMentionsPhd = /\bph\.?\s*d\.?|doctorate|doctoral\b/i.test(gap);
+  const sentenceMentionsPhd = /\bph\.?\s*d\.?|doctorate|doctoral\b/i.test(sentence);
+  const gapMentionsBachelors = /\bbachelor'?s?|bachelors|b\.?\s*s\.?|b\.?\s*a\.?\b/i.test(gap);
+  const sentenceMentionsBachelors = /\bbachelor'?s?|bachelors|b\.?\s*s\.?|b\.?\s*a\.?\b/i.test(sentence);
+
+  if (gapMentionsMasters && sentenceMentionsMasters) {
+    return true;
+  }
+
+  if (gapMentionsPhd && sentenceMentionsPhd) {
+    return true;
+  }
+
+  if (gapMentionsBachelors && sentenceMentionsBachelors) {
+    return true;
+  }
+
+  if (gapMentionsMasters || gapMentionsPhd || gapMentionsBachelors) {
+    return false;
+  }
+
   const gapWords = normalizedWords(gap);
   const sentenceWords = normalizedWords(sentence);
   let shared = 0;
@@ -49,6 +183,10 @@ function sharesMeaningfulTerms(gap, sentence) {
     }
   }
 
+  if (/\b(certification|certificate|certified)\b/i.test(gap)) {
+    return shared >= 2;
+  }
+
   return shared >= 1 || /\birt\b/i.test(gap) && /\birt\b/i.test(sentence);
 }
 
@@ -57,17 +195,18 @@ export function isPreferredOnlyGap(gap, jobDescriptionText) {
     return false;
   }
 
-  const sentences = splitSentences(jobDescriptionText);
-  const relatedPreferredSentences = sentences.filter(
-    (sentence) => hasPreferredLanguage(sentence) && sharesMeaningfulTerms(gap, sentence),
+  const requirementSentences = parseJobRequirementSentences(jobDescriptionText);
+  const relatedPreferredSentences = requirementSentences.filter(
+    ({ sentence, level }) =>
+      ['preferred', 'desired', 'bonus'].includes(level) && sharesMeaningfulTerms(gap, sentence),
   );
 
   if (relatedPreferredSentences.length === 0) {
     return false;
   }
 
-  const relatedRequiredSentences = sentences.filter(
-    (sentence) => hasRequiredLanguage(sentence) && !hasPreferredLanguage(sentence) && sharesMeaningfulTerms(gap, sentence),
+  const relatedRequiredSentences = requirementSentences.filter(
+    ({ sentence, level }) => level === 'required' && sharesMeaningfulTerms(gap, sentence),
   );
 
   return relatedRequiredSentences.length === 0;
@@ -107,7 +246,7 @@ function isUnsupportedInferredExperienceGap(gap, jobDescriptionText) {
       value,
     )
   ) {
-    return requiredYears === null;
+    return requiredYears === null && !['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
   }
 
   return false;
@@ -266,43 +405,19 @@ function isOptionalSectionHeading(line) {
 
 export function getRequiredEducationLevel(jobDescriptionText) {
   const levels = [];
-  let section = 'general';
 
-  for (const line of String(jobDescriptionText ?? '').split(/\r?\n/)) {
-    const trimmedLine = line.trim();
-    const isHeading =
-      trimmedLine.length < 100 &&
-      !/[.!?]$/.test(trimmedLine) &&
-      getEducationLevelFromText(trimmedLine) === null;
-
-    if (isHeading && isOptionalSectionHeading(trimmedLine)) {
-      section = 'optional';
+  for (const { sentence, level: requirementLevel } of parseJobRequirementSentences(jobDescriptionText)) {
+    if (requirementLevel !== 'required' && !hasEducationRequirementContext(sentence)) {
       continue;
     }
 
-    if (isHeading && isRequiredSectionHeading(trimmedLine)) {
-      section = 'required';
+    if (requirementLevel !== 'required') {
       continue;
     }
 
-    for (const sentence of splitSentences(trimmedLine)) {
-      if (section === 'optional') {
-        continue;
-      }
-
-      if (hasPreferredLanguage(sentence) && !hasRequiredLanguage(sentence)) {
-        continue;
-      }
-
-      const requiredContext = section === 'required' || hasEducationRequirementContext(sentence);
-      if (!requiredContext) {
-        continue;
-      }
-
-      const level = getEducationLevelFromText(sentence);
-      if (level !== null) {
-        levels.push(level);
-      }
+    const level = getEducationLevelFromText(sentence);
+    if (level !== null) {
+      levels.push(level);
     }
   }
 
@@ -904,7 +1019,7 @@ function contradictsRecommendation(analysis) {
   }
 
   if (recommendation === 'Skip ❌' || recommendation === 'Hard Skip ❌❌') {
-    return ['top priority', 'must apply', 'highest priority', 'strong apply', 'apply normally'].some(
+    return ['top priority', 'must apply', 'highest priority', 'strong apply', 'apply normally', 'apply because'].some(
       (phrase) => reasoning.includes(phrase),
     );
   }
@@ -1266,8 +1381,36 @@ function withEmployerTypeReasoning(reasoning, analysis) {
   return employerSentence ? `${reasoning} ${employerSentence}` : reasoning;
 }
 
+function getDecisionPriority(analysis) {
+  const criticalGapText = Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps.join(' ') : '';
+
+  if (
+    ['Hard Gap', 'Severe Gap'].includes(analysis?.experienceGate) ||
+    ['Large', 'Severe'].includes(analysis?.levelGap) ||
+    /\b\d+\+?\s*years?\b/i.test(criticalGapText) ||
+    /\bexperience[- ]level mismatch|seniority mismatch|staff|principal|lead\b/i.test(criticalGapText)
+  ) {
+    return 'P0_EXPERIENCE';
+  }
+
+  if (/\b(clearance|citizenship|visa|sponsorship|onsite|on-site|hybrid|relocation)\b/i.test(criticalGapText)) {
+    return 'P0_HARD_BLOCKER';
+  }
+
+  if (['Gap', 'Hard Gap', 'Severe Gap'].includes(analysis?.educationGate)) {
+    return 'P1_EDUCATION';
+  }
+
+  if (/\b(required|primary|core|language|framework|platform|domain|cloud|aws|azure|gcp|java|python|react|node|kubernetes)\b/i.test(criticalGapText)) {
+    return 'P1_REQUIRED_SKILL';
+  }
+
+  return 'P2_GENERAL';
+}
+
 function buildConsistentReasoning(analysis) {
   const recommendationType = getRecommendationType(analysis.recommendation);
+  const decisionPriority = getDecisionPriority(analysis);
   const hasExperienceGate = ['Hard Gap', 'Severe Gap'].includes(analysis.experienceGate);
   const hasEducationGate = ['Gap', 'Hard Gap', 'Severe Gap'].includes(analysis.educationGate);
   const hasLevelMismatch = ['Large', 'Severe'].includes(analysis.levelGap);
@@ -1275,18 +1418,22 @@ function buildConsistentReasoning(analysis) {
   const hasStrongMatches = Array.isArray(analysis.strongMatches) && analysis.strongMatches.length > 0;
 
   if (recommendationType === 'Hard Skip') {
-    if (hasEducationGate) {
-      return 'The role requires an advanced education credential that is not demonstrated by the resume.';
+    if (decisionPriority === 'P0_EXPERIENCE' || hasExperienceGate || hasLevelMismatch) {
+      return 'This role requires significantly more experience and seniority than demonstrated by the resume.';
     }
 
-    if (hasExperienceGate || hasLevelMismatch) {
-      return 'This role requires significantly more experience and seniority than demonstrated by the resume.';
+    if (decisionPriority === 'P1_EDUCATION' || hasEducationGate) {
+      return 'The role requires an advanced education credential that is not demonstrated by the resume.';
     }
 
     return 'The mismatch is too large to justify spending time on this application.';
   }
 
   if (recommendationType === 'Skip') {
+    if (decisionPriority === 'P0_EXPERIENCE' || hasExperienceGate || hasLevelMismatch) {
+      return 'The role is above the resume’s demonstrated experience level. There are better opportunities to prioritize.';
+    }
+
     if (hasEducationGate) {
       return 'The role has a required education credential that is not demonstrated by the resume.';
     }
@@ -1299,6 +1446,13 @@ function buildConsistentReasoning(analysis) {
   }
 
   if (recommendationType === 'Apply') {
+    if (decisionPriority === 'P0_EXPERIENCE' || hasExperienceGate || hasLevelMismatch) {
+      return withEmployerTypeReasoning(
+        'Apply because the core stack has some overlap, but the experience level is the main concern.',
+        analysis,
+      );
+    }
+
     if (hasEducationGate) {
       return withEmployerTypeReasoning(
         'Apply because the role has some overlap, but the required degree is not demonstrated by the resume.',
@@ -1369,12 +1523,337 @@ function hasUxReasoningIssue(analysis) {
   );
 }
 
+const interviewChanceRanges = ['<1%', '1-3%', '3-7%', '5-10%', '8-15%', '15-25%', '25%+'];
+
+function getInterviewChanceRank(interviewChance) {
+  const normalizedChance = interviewChanceRanges.find((range) => range === interviewChance);
+  if (normalizedChance) {
+    return interviewChanceRanges.indexOf(normalizedChance);
+  }
+
+  const upperBound = getInterviewChanceUpperBound(interviewChance);
+  if (upperBound === null) return 2;
+  if (upperBound <= 1) return 0;
+  if (upperBound <= 3) return 1;
+  if (upperBound <= 7) return 2;
+  if (upperBound <= 10) return 3;
+  if (upperBound <= 15) return 4;
+  if (upperBound <= 25) return 5;
+  return 6;
+}
+
+function minInterviewChance(...chances) {
+  const normalized = chances.filter(Boolean);
+  if (normalized.length === 0) {
+    return '3-7%';
+  }
+
+  return normalized.sort((a, b) => getInterviewChanceRank(a) - getInterviewChanceRank(b))[0];
+}
+
+function hasVeryHighCompetitionSignals(jobDescriptionText) {
+  const text = String(jobDescriptionText ?? '');
+  const hasRemote = /\b(remote|fully remote|100%\s*remote|work from home)\b/i.test(text);
+  const hasEasyApply = /\beasy apply\b/i.test(text);
+  const applicantCount = Array.from(text.matchAll(/\b(\d{2,4})\+?\s+applicants?\b/gi)).map((match) =>
+    Number(match[1]),
+  );
+
+  return (hasRemote && hasEasyApply) || applicantCount.some((count) => count >= 100);
+}
+
+function getDeterministicInterviewChance(analysis, jobDescriptionText) {
+  const score = Number(analysis?.fitScore ?? 0);
+  const companyType = analysis?.companyType ?? 'Unknown';
+  const opportunityQuality = analysis?.opportunityQuality ?? 'Medium';
+  const effortLevel = analysis?.effortLevel ?? 'Low';
+  const applicationRequirements = Array.isArray(analysis?.applicationRequirements)
+    ? analysis.applicationRequirements
+    : [];
+  const hasHeavyApplicationEffort =
+    effortLevel === 'Very High' ||
+    applicationRequirements.includes('AI Interview Required') ||
+    applicationRequirements.includes('Multi-hour Assessment Required') ||
+    (applicationRequirements.includes('Coding Challenge Required') &&
+      applicationRequirements.includes('Video Submission Required'));
+
+  if (analysis?.experienceGate === 'Severe Gap' || analysis?.levelGap === 'Severe' || analysis?.educationGate === 'Severe Gap') {
+    return '<1%';
+  }
+
+  if (analysis?.experienceGate === 'Hard Gap' || analysis?.educationGate === 'Hard Gap') {
+    return '1-3%';
+  }
+
+  let chance;
+
+  if (score >= 9) {
+    chance = opportunityQuality === 'High' && companyType === 'Direct Employer' ? '15-25%' : '8-15%';
+  } else if (score >= 8) {
+    chance = opportunityQuality === 'High' && companyType === 'Direct Employer' ? '8-15%' : '5-10%';
+  } else if (score >= 7) {
+    chance = opportunityQuality === 'High' && companyType === 'Direct Employer' ? '8-15%' : '3-7%';
+  } else if (score >= 6) {
+    chance = opportunityQuality === 'High' && companyType === 'Direct Employer' ? '3-7%' : '1-3%';
+  } else if (score >= 4) {
+    chance = '1-3%';
+  } else {
+    chance = '1-3%';
+  }
+
+  const caps = [];
+
+  if (companyType === 'Staffing Agency') caps.push('5-10%');
+  if (companyType === 'Talent Network' || companyType === 'Suspicious Posting') caps.push('3-7%');
+  if (opportunityQuality === 'Low') caps.push('5-10%');
+  if (hasVeryHighCompetitionSignals(jobDescriptionText)) caps.push('3-7%');
+  if (hasHeavyApplicationEffort && score < 9) caps.push('5-10%');
+
+  return minInterviewChance(chance, ...caps);
+}
+
+function getDeterministicFitScore(analysis) {
+  const score = Number(analysis?.fitScore ?? 0);
+
+  if (analysis?.educationGate === 'Severe Gap') {
+    return 2.0;
+  }
+
+  if (analysis?.experienceGate === 'Severe Gap' && analysis?.levelGap === 'Severe') {
+    return 2.5;
+  }
+
+  if (analysis?.experienceGate === 'Severe Gap') {
+    return 3.0;
+  }
+
+  if (analysis?.levelGap === 'Severe') {
+    return 3.5;
+  }
+
+  return Number.isFinite(score) ? score : 0;
+}
+
+function hasVeryHighApplicationEffort(analysis) {
+  const effortLevel = analysis?.effortLevel ?? 'Low';
+  const applicationRequirements = Array.isArray(analysis?.applicationRequirements)
+    ? analysis.applicationRequirements
+    : [];
+
+  return (
+    effortLevel === 'Very High' ||
+    applicationRequirements.includes('AI Interview Required') ||
+    applicationRequirements.includes('Multi-hour Assessment Required') ||
+    (applicationRequirements.includes('Coding Challenge Required') &&
+      applicationRequirements.includes('Video Submission Required'))
+  );
+}
+
+function getDeterministicRecommendation(analysis) {
+  const score = Number(analysis?.fitScore ?? 0);
+  const opportunityQuality = analysis?.opportunityQuality ?? 'Medium';
+  const interviewChanceUpperBound = getInterviewChanceUpperBound(analysis?.interviewChance);
+  const lowInterviewChance = interviewChanceUpperBound !== null && interviewChanceUpperBound <= 5;
+  const veryHighEffort = hasVeryHighApplicationEffort(analysis);
+  let recommendation;
+
+  if (analysis?.experienceGate === 'Severe Gap' || analysis?.levelGap === 'Severe' || analysis?.educationGate === 'Severe Gap') {
+    recommendation = hasExtremeMismatchForHardSkip(analysis) ? 'Hard Skip \u274c\u274c' : 'Skip \u274c';
+  } else if (
+    analysis?.experienceGate === 'Hard Gap' ||
+    analysis?.educationGate === 'Hard Gap' ||
+    hasBlockingExperienceMismatchForRecommendation(analysis)
+  ) {
+    recommendation = 'Skip \u274c';
+  } else if (score <= 3.5) {
+    recommendation = hasExtremeMismatchForHardSkip(analysis) ? 'Hard Skip \u274c\u274c' : 'Skip \u274c';
+  } else if (score >= 8) {
+    recommendation =
+      opportunityQuality === 'High' && !veryHighEffort && !lowInterviewChance
+        ? 'Strong Apply \u2705'
+        : 'Apply \u2705';
+  } else if (score >= 6) {
+    recommendation = 'Apply \u2705';
+  } else {
+    recommendation = 'Skip \u274c';
+  }
+
+  return capRecommendation(recommendation, analysis?.recommendationCap);
+}
+
+function normalizeStringList(items) {
+  if (!Array.isArray(items)) {
+    return [];
+  }
+
+  const seen = new Set();
+  const normalized = [];
+
+  for (const item of items) {
+    const value = typeof item === 'string' ? item.trim() : '';
+    const key = value.toLowerCase();
+
+    if (!value || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalized.push(value);
+  }
+
+  return normalized;
+}
+
+function getCriticalGapPriority(gap) {
+  if (/\d+\+?\s*years?|experience requirement|experience-level|seniority/i.test(gap)) return 0;
+  if (/degree|education|phd|master|bachelor/i.test(gap)) return 1;
+  if (/security clearance|clearance|citizen/i.test(gap)) return 2;
+  return 3;
+}
+
+function getCriticalGapSemanticKey(gap) {
+  const value = String(gap ?? '').toLowerCase();
+
+  if (/\b(major|severe|moderate)?\s*experience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
+    return 'experience-level';
+  }
+
+  const yearsMatch = value.match(/\b(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/i);
+  if (yearsMatch && /\b(experience|professional|software|engineering|development|developer)\b/i.test(value)) {
+    return `years-${yearsMatch[1]}`;
+  }
+
+  return value
+    .replace(/\b(no|lack of|lacks|missing|required|requirement not met|not met|experience|professional|software|engineering|development|developer|of|with|in|the|and)\b/gi, ' ')
+    .replace(/[^a-z0-9+#.]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isExperienceGapKey(key) {
+  return key === 'experience-level' || /^years-\d+$/.test(key);
+}
+
+function getCriticalGapClarityScore(gap) {
+  const value = String(gap ?? '');
+  let score = 0;
+
+  if (/requirement not met/i.test(value)) score += 15;
+  if (/\d+\+?\s*years?/i.test(value)) score += 10;
+  if (/experience[- ]level mismatch/i.test(value)) score += 8;
+  if (/^(Major|Severe|Moderate) experience[- ]level mismatch$/i.test(value)) score += 8;
+  score -= Math.max(0, value.length - 55) / 10;
+
+  return score;
+}
+
+function chooseClearerCriticalGap(current, next) {
+  return getCriticalGapClarityScore(next) > getCriticalGapClarityScore(current) ? next : current;
+}
+
+function dedupeCriticalGapsByMeaning(gaps) {
+  const normalized = normalizeStringList(gaps);
+  const byKey = new Map();
+
+  for (const gap of normalized) {
+    const semanticKey = getCriticalGapSemanticKey(gap);
+    const key = isExperienceGapKey(semanticKey) ? 'experience-gap' : semanticKey;
+
+    if (!key) {
+      continue;
+    }
+
+    byKey.set(key, byKey.has(key) ? chooseClearerCriticalGap(byKey.get(key), gap) : gap);
+  }
+
+  return [...byKey.values()];
+}
+
+function sortCriticalGaps(gaps) {
+  return dedupeCriticalGapsByMeaning(gaps).sort((a, b) => {
+    const priorityDifference = getCriticalGapPriority(a) - getCriticalGapPriority(b);
+    return priorityDifference === 0 ? a.localeCompare(b) : priorityDifference;
+  });
+}
+
+function isRequiredBackedCriticalGap(gap, jobDescriptionText) {
+  const value = String(gap ?? '');
+
+  if (hasPreferredLanguage(value)) {
+    return false;
+  }
+
+  if (/\b\d+\+?\s*years?\b/i.test(value)) {
+    const requiredYears = getRequiredExperienceYears(jobDescriptionText);
+    const gapYears = getYearsMentionedInGap(value);
+    return requiredYears !== null && gapYears.includes(requiredYears);
+  }
+
+  if (/\bexperience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
+    return getRequiredExperienceYears(jobDescriptionText) !== null || ['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
+  }
+
+  const requirementSentences = parseJobRequirementSentences(jobDescriptionText);
+  return requirementSentences.some(
+    ({ sentence, level }) => level === 'required' && sharesMeaningfulTerms(value, sentence),
+  );
+}
+
+function normalizeFinalCriticalGaps(analysis, jobDescriptionText) {
+  const deterministicGaps = [];
+  const requiredYears = analysis?.requiredExperienceYears ?? getRequiredExperienceYears(jobDescriptionText);
+  const experienceGate = analysis?.experienceGate;
+  const levelGap = analysis?.levelGap;
+
+  if (requiredYears !== null && requiredYears >= 3 && experienceGate !== 'Pass') {
+    deterministicGaps.push(`${requiredYears}+ years experience requirement not met`);
+  }
+
+  if (['Severe Gap'].includes(experienceGate) || levelGap === 'Severe') {
+    return sortCriticalGaps(deterministicGaps.length > 0 ? deterministicGaps : ['Severe experience-level mismatch']);
+  }
+
+  const modelGaps = normalizeStringList(analysis?.criticalGaps).filter(
+    (gap) =>
+      !isPreferredOnlyGap(gap, jobDescriptionText) &&
+      !isUnsupportedInferredExperienceGap(gap, jobDescriptionText) &&
+      isRequiredBackedCriticalGap(gap, jobDescriptionText),
+  );
+
+  return sortCriticalGaps([...deterministicGaps, ...modelGaps]).slice(0, 5);
+}
+
+function canonicalizeFinalAnalysis(analysis, { jobDescriptionText, resumeText }) {
+  const scoreCalibratedAnalysis = {
+    ...analysis,
+    fitScore: getDeterministicFitScore(analysis),
+  };
+  const chanceCalibratedAnalysis = {
+    ...scoreCalibratedAnalysis,
+    interviewChance: getDeterministicInterviewChance(scoreCalibratedAnalysis, jobDescriptionText),
+    applicationRequirements: normalizeStringList(scoreCalibratedAnalysis?.applicationRequirements),
+    strongMatches: normalizeStrongMatches(scoreCalibratedAnalysis?.strongMatches, {
+      resumeText,
+      jobDescriptionText,
+    }),
+    criticalGaps: normalizeFinalCriticalGaps(scoreCalibratedAnalysis, jobDescriptionText),
+  };
+
+  return {
+    ...chanceCalibratedAnalysis,
+    recommendation: getDeterministicRecommendation(chanceCalibratedAnalysis),
+  };
+}
+
 export function applyFinalConsistencyRepair(analysis, { resumeText, jobDescriptionText }) {
   const genericAnalysis = {
     ...analysis,
     shortReasoning: normalizePublicLanguage(analysis?.shortReasoning),
   };
-  const recommendationConsistentAnalysis = repairRecommendationForConsistency(genericAnalysis);
+  const recommendationConsistentAnalysis = canonicalizeFinalAnalysis(
+    repairRecommendationForConsistency(genericAnalysis),
+    { jobDescriptionText, resumeText },
+  );
 
   const stripInternalFields = (value) => {
     const {
@@ -1401,7 +1880,9 @@ export function applyFinalConsistencyRepair(analysis, { resumeText, jobDescripti
           ...recommendationConsistentAnalysis,
           shortReasoning: buildConsistentReasoning(recommendationConsistentAnalysis),
         };
-  const finalRecommendationAnalysis = applyRecommendationHardRules(reasoningConsistentAnalysis);
+  const finalRecommendationAnalysis = applyRecommendationHardRules(
+    canonicalizeFinalAnalysis(reasoningConsistentAnalysis, { jobDescriptionText, resumeText }),
+  );
 
   if (finalRecommendationAnalysis.recommendation !== reasoningConsistentAnalysis.recommendation) {
     return stripInternalFields({

@@ -51,7 +51,7 @@ test('adds Authentication when JD asks for identity platforms and resume has gen
 
   assert.deepEqual(
     normalizeStrongMatches([], { resumeText, jobDescriptionText }),
-    ['Authentication'],
+    ['Authentication & Authorization'],
   );
 });
 
@@ -61,6 +61,84 @@ test('keeps platform-specific identity systems separate from general authenticat
 
   assert.deepEqual(
     normalizeStrongMatches(['Okta', 'Auth0'], { resumeText, jobDescriptionText }),
-    ['Authentication'],
+    ['Authentication & Authorization'],
+  );
+});
+
+test('canonicalizes frontend keyword clusters into one React capability', () => {
+  const resumeText = 'Built React, React Hooks, TypeScript, and JavaScript interfaces.';
+  const jobDescriptionText = 'Frontend role requiring React, React.js, TypeScript, JavaScript, and React Hooks.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['React', 'JavaScript', 'TypeScript', 'React Hooks'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['React'],
+  );
+});
+
+test('canonicalizes general SQL requests into SQL Databases', () => {
+  const resumeText = 'Worked with SQL, PostgreSQL, SQL Server, and MySQL databases.';
+  const jobDescriptionText = 'Backend role requiring SQL database experience.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['SQL', 'PostgreSQL', 'SQL Server'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['SQL Databases'],
+  );
+});
+
+test('keeps explicitly requested database technology specific', () => {
+  const resumeText = 'Built production services with PostgreSQL and SQL.';
+  const jobDescriptionText = 'Backend role requiring PostgreSQL experience.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['SQL', 'PostgreSQL'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['PostgreSQL'],
+  );
+});
+
+test('suppresses broad SQL Databases when PostgreSQL is already shown', () => {
+  const resumeText = 'Built production services with PostgreSQL, SQL, Python, C#, and .NET.';
+  const jobDescriptionText = 'Backend role requiring C#, Python, .NET, PostgreSQL, and SQL database experience.';
+
+  const matches = normalizeStrongMatches(['C#', 'Python', '.NET', 'PostgreSQL', 'SQL Databases'], {
+    resumeText,
+    jobDescriptionText,
+  });
+
+  assert.ok(matches.includes('PostgreSQL'));
+  assert.equal(matches.includes('SQL Databases'), false);
+});
+
+test('canonicalizes REST and authentication variants', () => {
+  const resumeText = 'Built RESTful APIs with JWT authentication, authorization, and RBAC.';
+  const jobDescriptionText = 'Role requires REST API development and authentication/authorization experience.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['REST', 'REST API Development', 'JWT', 'Authentication', 'Authorization'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['REST APIs', 'Authentication & Authorization'],
+  );
+});
+
+test('ranks strong matches by engineering decision priority', () => {
+  const resumeText = 'Python React REST APIs PostgreSQL Docker GitHub Actions Cursor GitHub Copilot.';
+  const jobDescriptionText = 'Need Python, React, REST APIs, PostgreSQL, Docker, CI/CD, and AI coding tools.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['Docker', 'AI coding tools', 'PostgreSQL', 'REST APIs', 'React', 'Python'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['Python', 'React', 'REST APIs', 'PostgreSQL', 'Docker'],
   );
 });

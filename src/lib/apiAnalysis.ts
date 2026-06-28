@@ -7,6 +7,7 @@ import type {
   EmploymentType,
   MarketCompetition,
   OpportunityQuality,
+  Recommendation,
   StrongMatch,
 } from '../types/analysis';
 
@@ -50,6 +51,7 @@ const companyTypes: CompanyType[] = [
   'Unknown',
 ];
 const opportunityQualities: OpportunityQuality[] = ['High', 'Medium', 'Low'];
+const recommendations: Recommendation[] = ['Strong Apply ✅', 'Apply ✅', 'Skip ❌', 'Hard Skip ❌❌'];
 const effortLevelValues: EffortLevel[] = ['Low', 'Medium', 'High', 'Very High'];
 const employmentTypeValues: EmploymentType[] = [
   'Full-Time',
@@ -166,6 +168,10 @@ function opportunityQuality(value: unknown): OpportunityQuality {
   return opportunityQualities.includes(value as OpportunityQuality) ? (value as OpportunityQuality) : 'Medium';
 }
 
+function recommendation(value: unknown): Recommendation | null {
+  return recommendations.includes(value as Recommendation) ? (value as Recommendation) : null;
+}
+
 function mapEmploymentType(value: unknown): EmploymentType | undefined {
   return employmentTypeValues.includes(value as EmploymentType) ? (value as EmploymentType) : undefined;
 }
@@ -214,10 +220,9 @@ export async function analyzeWithApi(
     data.shortReasoning ?? data.reasoning,
     'The analysis completed, but no reasoning was returned.',
   );
-
-  return {
-    jobFitScore: mappedScore,
-    recommendation: getRecommendation(mappedScore, {
+  const mappedRecommendation =
+    recommendation(data.recommendation) ??
+    getRecommendation(mappedScore, {
       applicationRequirements: mappedApplicationRequirements,
       companyType: mappedCompanyType,
       effortLevel: mappedEffortLevel,
@@ -225,7 +230,11 @@ export async function analyzeWithApi(
       opportunityQuality: mappedOpportunityQuality,
       reasoning: [mappedReasoning, ...mappedCriticalGaps].join(' '),
       strongMatchCount: mappedStrongMatches.length,
-    }),
+    });
+
+  return {
+    jobFitScore: mappedScore,
+    recommendation: mappedRecommendation,
     estimatedInterviewChance: mappedInterviewChance,
     marketCompetition: marketCompetition(data.marketCompetition),
     jobLogistics: text(data.jobLogistics, 'Not specified'),

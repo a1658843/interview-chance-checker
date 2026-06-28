@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, RotateCcw, Target } from 'lucide-react';
+import { ArrowRight, Loader2, RotateCcw, Target } from 'lucide-react';
 import { TextInputPanel } from './components/TextInputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { analyzeMatch } from './lib/analyzeMatch';
@@ -16,6 +16,7 @@ function App() {
   const [inputError, setInputError] = useState<string | null>(null);
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [resultVersion, setResultVersion] = useState(0);
 
   const canAnalyze = resumeText.trim().length > 0 && jobDescriptionText.trim().length > 0 && !isAnalyzing;
 
@@ -60,8 +61,10 @@ function App() {
 
     try {
       setResult(ensureDecisionSignals(await analyzeWithApi(resumeText, jobDescriptionText)));
+      setResultVersion((version) => version + 1);
     } catch {
       setResult(ensureDecisionSignals(analyzeMatch(resumeText, jobDescriptionText)));
+      setResultVersion((version) => version + 1);
       setAnalysisWarning('LLM analysis is unavailable right now, so this result uses the local heuristic fallback.');
     } finally {
       setIsAnalyzing(false);
@@ -75,6 +78,7 @@ function App() {
     setInputError(null);
     setAnalysisWarning(null);
     setIsAnalyzing(false);
+    setResultVersion(0);
   }
 
   return (
@@ -109,8 +113,17 @@ function App() {
               disabled={!canAnalyze}
               className="inline-flex h-11 items-center gap-2 rounded-md bg-cyan-700 px-5 text-sm font-semibold text-white shadow-sm transition hover:bg-cyan-800 disabled:cursor-not-allowed disabled:bg-slate-300"
             >
-              {isAnalyzing ? 'Analyzing...' : 'Check Fit'}
-              <ArrowRight className="h-4 w-4" />
+              {isAnalyzing ? (
+                <>
+                  <Loader2 className="h-4 w-4 animate-spin" />
+                  Analyzing...
+                </>
+              ) : (
+                <>
+                  Check Fit
+                  <ArrowRight className="h-4 w-4" />
+                </>
+              )}
             </button>
           </div>
         </header>
@@ -140,7 +153,13 @@ function App() {
           />
         </section>
 
-        <ResultsPanel result={result} inputError={inputError} analysisWarning={analysisWarning} />
+        <ResultsPanel
+          result={result}
+          inputError={inputError}
+          analysisWarning={analysisWarning}
+          isAnalyzing={isAnalyzing}
+          resultVersion={resultVersion}
+        />
       </div>
     </main>
   );
