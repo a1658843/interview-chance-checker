@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { ArrowRight, Loader2, RotateCcw, Target } from 'lucide-react';
+import { ArrowRight, Info, Loader2, RotateCcw, Target } from 'lucide-react';
 import { TextInputPanel } from './components/TextInputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { analyzeMatch } from './lib/analyzeMatch';
@@ -17,6 +17,7 @@ function App() {
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [resultVersion, setResultVersion] = useState(0);
+  const [optimizeForApplicationRoi, setOptimizeForApplicationRoi] = useState(true);
 
   const canAnalyze = resumeText.trim().length > 0 && jobDescriptionText.trim().length > 0 && !isAnalyzing;
 
@@ -32,12 +33,36 @@ function App() {
     const applicationRequirements = Array.from(
       new Set([...analysis.applicationRequirements, ...extractApplicationRequirements(jobDescriptionText)]),
     );
+    const technicalRecommendation = analysis.technicalRecommendation ?? analysis.recommendation;
+    const technicalReasoning = analysis.technicalReasoning ?? analysis.reasoning;
+    const roiRecommendation = analysis.roiRecommendation ?? analysis.recommendation;
+    const roiReasoning = analysis.roiReasoning ?? analysis.reasoning;
 
     return {
       ...analysis,
+      technicalRecommendation,
+      technicalReasoning,
+      roiRecommendation,
+      roiReasoning,
       applicationRequirements,
       effortLevel: getEffortLevel(applicationRequirements),
       employmentType: analysis.employmentType ?? extractEmploymentType(jobDescriptionText) ?? undefined,
+    };
+  }
+
+  function getDisplayedResult(analysis: AnalysisResult | null) {
+    if (!analysis) {
+      return null;
+    }
+
+    return {
+      ...analysis,
+      recommendation: optimizeForApplicationRoi
+        ? (analysis.roiRecommendation ?? analysis.recommendation)
+        : (analysis.technicalRecommendation ?? analysis.recommendation),
+      reasoning: optimizeForApplicationRoi
+        ? (analysis.roiReasoning ?? analysis.reasoning)
+        : (analysis.technicalReasoning ?? analysis.reasoning),
     };
   }
 
@@ -60,7 +85,11 @@ function App() {
     setIsAnalyzing(true);
 
     try {
-      setResult(ensureDecisionSignals(await analyzeWithApi(resumeText, jobDescriptionText)));
+      setResult(
+        ensureDecisionSignals(
+          await analyzeWithApi(resumeText, jobDescriptionText, optimizeForApplicationRoi),
+        ),
+      );
       setResultVersion((version) => version + 1);
     } catch {
       setResult(ensureDecisionSignals(analyzeMatch(resumeText, jobDescriptionText)));
@@ -98,7 +127,30 @@ function App() {
               Check how well a resume fits a specific software engineering job.
             </p>
           </div>
-          <div className="flex flex-wrap gap-3">
+          <div className="flex flex-wrap items-center gap-3">
+            <div className="inline-flex h-11 items-center gap-2 rounded-md border border-slate-200 bg-white px-3 text-sm font-semibold text-slate-700 shadow-sm">
+              <label className="inline-flex items-center gap-2">
+                <input
+                  type="checkbox"
+                  checked={optimizeForApplicationRoi}
+                  onChange={(event) => setOptimizeForApplicationRoi(event.target.checked)}
+                  className="h-4 w-4 rounded border-slate-300 text-cyan-700 focus:ring-cyan-600"
+                />
+                <span>Skip Low-ROI Opportunities</span>
+              </label>
+              <span className="group relative inline-flex">
+                <button
+                  type="button"
+                  aria-label="Skip Low-ROI Opportunities information"
+                  className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 outline-none transition hover:text-cyan-700 focus-visible:text-cyan-700 focus-visible:ring-2 focus-visible:ring-cyan-200"
+                >
+                  <Info className="h-4 w-4" />
+                </button>
+                <span className="pointer-events-none absolute right-0 top-6 z-10 hidden w-80 rounded-md border border-slate-200 bg-white px-3 py-2 text-left text-xs font-normal leading-5 text-slate-600 shadow-lg group-hover:block group-focus-within:block">
+                  Filters out opportunities with consistently poor expected return on application time, such as talent marketplaces, project-task platforms, or high-friction intermediary funnels. Objective fit analysis is unchanged.
+                </span>
+              </span>
+            </div>
             <button
               type="button"
               onClick={handleReset}
@@ -154,7 +206,7 @@ function App() {
         </section>
 
         <ResultsPanel
-          result={result}
+          result={getDisplayedResult(result)}
           inputError={inputError}
           analysisWarning={analysisWarning}
           isAnalyzing={isAnalyzing}

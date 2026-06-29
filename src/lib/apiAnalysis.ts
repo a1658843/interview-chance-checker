@@ -19,11 +19,16 @@ type ApiAnalysisResult = {
   fitScore?: unknown;
   jobFitScore?: unknown;
   recommendation?: unknown;
+  technicalRecommendation?: unknown;
+  technicalReasoning?: unknown;
+  roiRecommendation?: unknown;
+  roiReasoning?: unknown;
   interviewChance?: unknown;
   estimatedInterviewChance?: unknown;
   marketCompetition?: unknown;
   jobLogistics?: unknown;
   employmentType?: unknown;
+  postingSource?: unknown;
   companyType?: unknown;
   opportunityQuality?: unknown;
   strongMatches?: unknown;
@@ -187,13 +192,14 @@ function text(value: unknown, fallback: string) {
 export async function analyzeWithApi(
   resumeText: string,
   jobDescriptionText: string,
+  optimizeForApplicationRoi = true,
 ): Promise<AnalysisResult> {
   const response = await fetch('/api/analyze', {
     method: 'POST',
     headers: {
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ resumeText, jobDescriptionText }),
+    body: JSON.stringify({ resumeText, jobDescriptionText, optimizeForApplicationRoi }),
   });
 
   if (!response.ok) {
@@ -235,10 +241,17 @@ export async function analyzeWithApi(
   return {
     jobFitScore: mappedScore,
     recommendation: mappedRecommendation,
+    technicalRecommendation: recommendation(data.technicalRecommendation) ?? mappedRecommendation,
+    technicalReasoning: text(data.technicalReasoning, mappedReasoning),
+    roiRecommendation: recommendation(data.roiRecommendation) ?? mappedRecommendation,
+    roiReasoning: text(data.roiReasoning, mappedReasoning),
     estimatedInterviewChance: mappedInterviewChance,
     marketCompetition: marketCompetition(data.marketCompetition),
     jobLogistics: text(data.jobLogistics, 'Not specified'),
     employmentType: mapEmploymentType(data.employmentType) ?? extractEmploymentType(jobDescriptionText) ?? undefined,
+    postingSource: typeof data.postingSource === 'string' && data.postingSource.trim().length > 0
+      ? data.postingSource.trim()
+      : undefined,
     companyType: mappedCompanyType,
     opportunityQuality: mappedOpportunityQuality,
     strongMatches: mappedStrongMatches,

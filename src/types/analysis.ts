@@ -31,10 +31,15 @@ export type StrongMatch = {
 export type AnalysisResult = {
   jobFitScore: number;
   recommendation: Recommendation;
+  technicalRecommendation?: Recommendation;
+  technicalReasoning?: string;
+  roiRecommendation?: Recommendation;
+  roiReasoning?: string;
   estimatedInterviewChance: string;
   marketCompetition: MarketCompetition;
   jobLogistics: string;
   employmentType?: EmploymentType;
+  postingSource?: string;
   companyType: CompanyType;
   opportunityQuality: OpportunityQuality;
   strongMatches: StrongMatch[];

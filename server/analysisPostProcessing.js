@@ -1,4 +1,6 @@
 import { isStrongMatchSupportedByResume, normalizeStrongMatches } from './strongMatches.js';
+import { applyRoiStrategy, hasLowApplicationRoi } from './roiEvaluation.js';
+import { isKnownLowRoiSource } from './knownLowRoiSources.js';
 
 const unsupportedReasoningSkills = [
   'Node.js',
@@ -246,7 +248,7 @@ function isUnsupportedInferredExperienceGap(gap, jobDescriptionText) {
       value,
     )
   ) {
-    return requiredYears === null && !['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
+    return (requiredYears === null || requiredYears < 3) && !['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
   }
 
   return false;
@@ -291,6 +293,26 @@ function hasSpecificStaffingDetails(jobDescriptionText) {
   );
 }
 
+function isProjectTaskPlatform(jobDescriptionText) {
+  const text = String(jobDescriptionText ?? '');
+  const signals = [
+    /\bafterquery\b/i,
+    /\bproject[- ]based\b/i,
+    /\btask[- ]style\b/i,
+    /\btasks?\s+(?:are\s+)?assigned\s+project[- ]by[- ]project\b/i,
+    /\bproject[- ]by[- ]project\b/i,
+    /\b10\s*(?:-|–|—|to)\s*20\s*hours?\s*\/?\s*week\b/i,
+    /\b2\s*(?:-|–|—|to)\s*3\s*weeks?\b/i,
+    /\bvariety of stacks\b/i,
+    /\bportfolio building\b/i,
+    /\bsupports?\s+ai labs?\b/i,
+    /\bresearch lab\b/i,
+    /\breal[- ]world engineering problems\b/i,
+  ];
+
+  return signals.filter((signal) => signal.test(text)).length >= 2;
+}
+
 function classifyEmployerType(jobDescriptionText) {
   const text = String(jobDescriptionText ?? '');
 
@@ -303,7 +325,7 @@ function classifyEmployerType(jobDescriptionText) {
   }
 
   if (
-    /\b(crossing hurdles|dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client)\b/i.test(
+    /\b(crossing hurdles|dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client|one of our clients|work for one of our clients|unknown end client|end client)\b/i.test(
       text,
     )
   ) {
@@ -314,11 +336,88 @@ function classifyEmployerType(jobDescriptionText) {
     /\b(talent network|talent community|join our network|future opportunities|matching platform|candidate marketplace|talent pool|build your profile|create candidate account|future matching opportunities|workerbee)\b/i.test(
       text,
     )
+    || isProjectTaskPlatform(text)
   ) {
     return 'Talent Network';
   }
 
   return null;
+}
+
+function cleanPostingSource(value) {
+  return String(value ?? '')
+    .replace(/\s+/g, ' ')
+    .replace(/^[\s:|\-–—]+|[\s:|\-–—]+$/g, '')
+    .trim();
+}
+
+function isLinkedInChromeLine(value) {
+  return /^(share|show more options|save|follow|view job|apply|easy apply|promoted|reposted|actively hiring|see who .* hired|similar jobs|show more|show less)$/i.test(
+    cleanPostingSource(value),
+  );
+}
+
+function looksLikePostingSource(value) {
+  const source = cleanPostingSource(value);
+
+  return (
+    source.length >= 2 &&
+    source.length <= 60 &&
+    !isLinkedInChromeLine(source) &&
+    !/\b(remote|hybrid|onsite|full[- ]time|part[- ]time|contract|internship|applicants?|ago|reposted|promoted|easy apply|followers?|employees?)\b/i.test(
+      source,
+    ) &&
+    /[a-z]/i.test(source)
+  );
+}
+
+function extractPostingSource(jobDescriptionText) {
+  const lines = String(jobDescriptionText ?? '')
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines.slice(0, 18)) {
+    const labeledMatch = line.match(
+      /^(?:posting\s+source|source|company|employer|posted\s+by|hiring\s+company|recruiter|agency)\s*[:\-–—]\s*(.+)$/i,
+    );
+
+    if (labeledMatch && looksLikePostingSource(labeledMatch[1])) {
+      return cleanPostingSource(labeledMatch[1]);
+    }
+  }
+
+  const titleLikeHeadings = [
+    /\b(software|engineer|developer|frontend|backend|full[- ]stack|data|product|manager|analyst|consultant|specialist|architect|designer|intern)\b/i,
+    /\b(job|role|position|description|about|overview|requirements?|qualifications?)\b/i,
+  ];
+
+  for (const line of lines.slice(0, 20)) {
+    if (
+      looksLikePostingSource(line) &&
+      line.split(/\s+/).length <= 4 &&
+      !/[.!?]$/.test(line) &&
+      !/\b(is hiring|hiring for|is seeking|seeking a|seeking an|looking for)\b/i.test(line) &&
+      !titleLikeHeadings.some((pattern) => pattern.test(line)) &&
+      isKnownLowRoiSource(line)
+    ) {
+      return cleanPostingSource(line);
+    }
+  }
+
+  for (const line of lines.slice(0, 8)) {
+    if (
+      looksLikePostingSource(line) &&
+      line.split(/\s+/).length <= 5 &&
+      !/[.!?]$/.test(line) &&
+      !/\b(is hiring|hiring for|is seeking|seeking a|seeking an|looking for)\b/i.test(line) &&
+      !titleLikeHeadings.some((pattern) => pattern.test(line))
+    ) {
+      return cleanPostingSource(line);
+    }
+  }
+
+  return undefined;
 }
 
 function capInterviewChance(interviewChance, cap) {
@@ -440,7 +539,15 @@ export function getRequiredExperienceYears(jobDescriptionText) {
       continue;
     }
 
-    for (const match of sentence.matchAll(/\b(?:at least|minimum of|minimum|required)?\s*(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/gi)) {
+    const sentenceWithoutRanges = sentence.replace(
+      /\b(\d{1,2})\s*(?:-|–|—|to)\s*(\d{1,2})\+?\s*years?\b/gi,
+      (_, lower) => {
+        years.push(Number(lower));
+        return ' ';
+      },
+    );
+
+    for (const match of sentenceWithoutRanges.matchAll(/\b(?:at least|minimum of|minimum|required)?\s*(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/gi)) {
       years.push(Number(match[1]));
     }
   }
@@ -846,11 +953,13 @@ export function applyCandidateJobLevelGuardrails(analysis, { resumeText, jobDesc
 export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) {
   const detectedCompanyType = classifyEmployerType(jobDescriptionText);
   const companyType = detectedCompanyType ?? analysis?.companyType ?? 'Unknown';
+  const postingSource = analysis?.postingSource ?? extractPostingSource(jobDescriptionText);
 
   if (companyType === 'Talent Network') {
     return {
       ...analysis,
       companyType,
+      postingSource,
       opportunityQuality: 'Medium',
       interviewChance: capInterviewChance(analysis?.interviewChance, '3-7%'),
     };
@@ -860,6 +969,7 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
     return {
       ...analysis,
       companyType,
+      postingSource,
       opportunityQuality: 'Medium',
       interviewChance: capInterviewChance(analysis?.interviewChance, '3-7%'),
     };
@@ -874,6 +984,7 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
     return {
       ...analysis,
       companyType,
+      postingSource,
       opportunityQuality: 'High',
     };
   }
@@ -882,6 +993,7 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
     return {
       ...analysis,
       companyType,
+      postingSource,
       opportunityQuality: hasSpecificStaffingDetails(jobDescriptionText) ? 'Medium' : 'Low',
       interviewChance: capInterviewChance(analysis?.interviewChance, '5-10%'),
     };
@@ -890,6 +1002,7 @@ export function applyOpportunityQualityGuardrails(analysis, jobDescriptionText) 
   return {
     ...analysis,
     companyType,
+    postingSource,
   };
 }
 
@@ -1180,6 +1293,14 @@ function hasFinalConsistencyIssue(analysis, { resumeText, jobDescriptionText }) 
     hasExperienceGateReasoningIssue(analysis) ||
     hasEducationGateReasoningIssue(analysis) ||
     hasUnsupportedPositiveYearsClaim(analysis, { resumeText, jobDescriptionText }) ||
+    (
+      analysis?.optimizeForApplicationRoi &&
+      getRecommendationType(analysis?.recommendation) === 'Skip' &&
+      hasLowApplicationRoi(analysis) &&
+      !/\b(expected return|return on application time|application roi)\b/i.test(
+        String(analysis?.shortReasoning ?? ''),
+      )
+    ) ||
     /\b(candidate should apply only if|candidate is especially interested)\b/i.test(
       String(analysis?.shortReasoning ?? ''),
     )
@@ -1430,6 +1551,14 @@ function buildConsistentReasoning(analysis) {
   }
 
   if (recommendationType === 'Skip') {
+    if (analysis?.optimizeForApplicationRoi && hasLowApplicationRoi(analysis)) {
+      if (analysis?.companyType === 'Talent Network') {
+        return 'The technical fit is plausible, but the talent marketplace or project-task model lowers expected return on application time.';
+      }
+
+      return 'The technical fit is plausible, but the expected return on application time is low for this posting.';
+    }
+
     if (decisionPriority === 'P0_EXPERIENCE' || hasExperienceGate || hasLevelMismatch) {
       return 'The role is above the resume’s demonstrated experience level. There are better opportunities to prioritize.';
     }
@@ -1634,27 +1763,8 @@ function getDeterministicFitScore(analysis) {
   return Number.isFinite(score) ? score : 0;
 }
 
-function hasVeryHighApplicationEffort(analysis) {
-  const effortLevel = analysis?.effortLevel ?? 'Low';
-  const applicationRequirements = Array.isArray(analysis?.applicationRequirements)
-    ? analysis.applicationRequirements
-    : [];
-
-  return (
-    effortLevel === 'Very High' ||
-    applicationRequirements.includes('AI Interview Required') ||
-    applicationRequirements.includes('Multi-hour Assessment Required') ||
-    (applicationRequirements.includes('Coding Challenge Required') &&
-      applicationRequirements.includes('Video Submission Required'))
-  );
-}
-
 function getDeterministicRecommendation(analysis) {
   const score = Number(analysis?.fitScore ?? 0);
-  const opportunityQuality = analysis?.opportunityQuality ?? 'Medium';
-  const interviewChanceUpperBound = getInterviewChanceUpperBound(analysis?.interviewChance);
-  const lowInterviewChance = interviewChanceUpperBound !== null && interviewChanceUpperBound <= 5;
-  const veryHighEffort = hasVeryHighApplicationEffort(analysis);
   let recommendation;
 
   if (analysis?.experienceGate === 'Severe Gap' || analysis?.levelGap === 'Severe' || analysis?.educationGate === 'Severe Gap') {
@@ -1668,10 +1778,7 @@ function getDeterministicRecommendation(analysis) {
   } else if (score <= 3.5) {
     recommendation = hasExtremeMismatchForHardSkip(analysis) ? 'Hard Skip \u274c\u274c' : 'Skip \u274c';
   } else if (score >= 8) {
-    recommendation =
-      opportunityQuality === 'High' && !veryHighEffort && !lowInterviewChance
-        ? 'Strong Apply \u2705'
-        : 'Apply \u2705';
+    recommendation = 'Strong Apply \u2705';
   } else if (score >= 6) {
     recommendation = 'Apply \u2705';
   } else {
@@ -1790,7 +1897,8 @@ function isRequiredBackedCriticalGap(gap, jobDescriptionText) {
   }
 
   if (/\bexperience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
-    return getRequiredExperienceYears(jobDescriptionText) !== null || ['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
+    const requiredYears = getRequiredExperienceYears(jobDescriptionText);
+    return (requiredYears !== null && requiredYears >= 3) || ['Senior', 'Staff'].includes(inferJobLevel(jobDescriptionText));
   }
 
   const requirementSentences = parseJobRequirementSentences(jobDescriptionText);
@@ -1845,7 +1953,10 @@ function canonicalizeFinalAnalysis(analysis, { jobDescriptionText, resumeText })
   };
 }
 
-export function applyFinalConsistencyRepair(analysis, { resumeText, jobDescriptionText }) {
+export function applyFinalConsistencyRepair(
+  analysis,
+  { resumeText, jobDescriptionText, optimizeForApplicationRoi = true },
+) {
   const genericAnalysis = {
     ...analysis,
     shortReasoning: normalizePublicLanguage(analysis?.shortReasoning),
@@ -1883,15 +1994,26 @@ export function applyFinalConsistencyRepair(analysis, { resumeText, jobDescripti
   const finalRecommendationAnalysis = applyRecommendationHardRules(
     canonicalizeFinalAnalysis(reasoningConsistentAnalysis, { jobDescriptionText, resumeText }),
   );
+  const technicalAnalysis =
+    finalRecommendationAnalysis.recommendation !== reasoningConsistentAnalysis.recommendation
+      ? {
+          ...finalRecommendationAnalysis,
+          shortReasoning: buildConsistentReasoning(finalRecommendationAnalysis),
+        }
+      : finalRecommendationAnalysis;
+  const roiStrategyAnalysis = applyRoiStrategy(technicalAnalysis, {
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+  const selectedAnalysis = optimizeForApplicationRoi ? roiStrategyAnalysis : technicalAnalysis;
 
-  if (finalRecommendationAnalysis.recommendation !== reasoningConsistentAnalysis.recommendation) {
-    return stripInternalFields({
-      ...finalRecommendationAnalysis,
-      shortReasoning: buildConsistentReasoning(finalRecommendationAnalysis),
-    });
-  }
-
-  return stripInternalFields(finalRecommendationAnalysis);
+  return stripInternalFields({
+    ...selectedAnalysis,
+    technicalRecommendation: technicalAnalysis.recommendation,
+    technicalReasoning: technicalAnalysis.shortReasoning,
+    roiRecommendation: roiStrategyAnalysis.recommendation,
+    roiReasoning: roiStrategyAnalysis.shortReasoning,
+  });
 }
 
 export function recalibrateFitAfterPreferredGapRemoval(analysis) {

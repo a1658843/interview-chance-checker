@@ -1542,6 +1542,10 @@ export function analyzeMatch(resumeText: string, jobDescriptionText: string): An
   return {
     jobFitScore: score,
     recommendation,
+    technicalRecommendation: recommendation,
+    technicalReasoning: baseReasoning,
+    roiRecommendation: recommendation,
+    roiReasoning: baseReasoning,
     estimatedInterviewChance,
     marketCompetition: marketContext.marketCompetition,
     jobLogistics: 'Not specified',

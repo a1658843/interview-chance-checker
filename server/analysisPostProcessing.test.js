@@ -14,6 +14,7 @@ import {
   isPreferredOnlyGap,
   sanitizeUnsupportedReasoningSkills,
 } from './analysisPostProcessing.js';
+import { isKnownLowRoiSource } from './knownLowRoiSources.js';
 
 const APPLY = 'Apply \u2705';
 const SKIP = 'Skip \u274c';
@@ -258,7 +259,7 @@ test('Dice-style recruiter posting is detected as staffing agency and interview 
   assert.equal(result.interviewChance, '5-10%');
 });
 
-test('Crossing Hurdles staffing agency chance is capped and final reasoning mentions recruiting layer', () => {
+test('Crossing Hurdles staffing agency chance is capped without soft recommendation downgrade', () => {
   const jd = `
     Crossing Hurdles recruiting agency posting for a client seeking a Software Engineer.
     This staffing partner role requires React, Python, AWS, and SQL.
@@ -284,12 +285,14 @@ test('Crossing Hurdles staffing agency chance is capped and final reasoning ment
   });
 
   assert.equal(repaired.companyType, 'Staffing Agency');
-  assert.equal(repaired.recommendation, APPLY);
+  assert.equal(repaired.recommendation, STRONG_APPLY);
+  assert.equal(repaired.technicalRecommendation, STRONG_APPLY);
+  assert.equal(repaired.roiRecommendation, STRONG_APPLY);
   assert.equal(repaired.interviewChance, '5-10%');
   assert.match(repaired.shortReasoning, /staffing|recruiting|agency|client/i);
 });
 
-test('Workerbee talent marketplace chance is capped lower than staffing and reasoning mentions candidate pool', () => {
+test('Workerbee talent marketplace chance is capped lower than staffing and ROI strategy skips', () => {
   const jd = `
     Workerbee Software Engineer Talent Network.
     Join our network and build your profile for future matching opportunities through our candidate marketplace.
@@ -321,9 +324,11 @@ test('Workerbee talent marketplace chance is capped lower than staffing and reas
   );
 
   assert.equal(repaired.companyType, 'Talent Network');
-  assert.equal(repaired.recommendation, APPLY);
+  assert.equal(repaired.recommendation, SKIP);
+  assert.equal(repaired.technicalRecommendation, STRONG_APPLY);
+  assert.equal(repaired.roiRecommendation, SKIP);
   assert.equal(repaired.interviewChance, '3-7%');
-  assert.match(repaired.shortReasoning, /candidate pool|marketplace|matching/i);
+  assert.match(repaired.shortReasoning, /application time|marketplace|project-task/i);
 });
 
 test('direct employer keeps interview chance unchanged', () => {
@@ -473,7 +478,7 @@ test('final repair does not describe a preferred-only domain gap as a blocker', 
   assert.equal(/critical blocker|primary weakness/i.test(result.shortReasoning), false);
 });
 
-test('final repair resolves Strong Apply with low opportunity quality', () => {
+test('final repair keeps Strong Apply for staffing without strong ROI override signals', () => {
   const result = applyFinalConsistencyRepair(
     {
       fitScore: 8.8,
@@ -492,8 +497,9 @@ test('final repair resolves Strong Apply with low opportunity quality', () => {
     },
   );
 
-  assert.equal(result.recommendation.startsWith('Apply'), true);
-  assert.equal(/Strong Apply|top priority/.test(result.shortReasoning), false);
+  assert.equal(result.recommendation, STRONG_APPLY);
+  assert.equal(result.technicalRecommendation, STRONG_APPLY);
+  assert.equal(result.roiRecommendation, STRONG_APPLY);
   assert.equal(/opportunity quality|fit score|interview chance/i.test(result.shortReasoning), false);
 });
 
@@ -544,6 +550,8 @@ test('extracts required years only from candidate requirement context', () => {
   assert.equal(getRequiredExperienceYears('Trusted by customers for over 20 years.'), null);
   assert.equal(getRequiredExperienceYears('Qualifications: 5+ years Java experience.'), 5);
   assert.equal(getRequiredExperienceYears('Preferred qualifications: 5+ years healthcare experience.'), null);
+  assert.equal(getRequiredExperienceYears('Requirements: 1–3 years of software engineering experience.'), 1);
+  assert.equal(getRequiredExperienceYears('Requirements: 1-3 years of software engineering experience.'), 1);
 });
 
 test('extracts candidate years only when explicitly supported by resume text', () => {
@@ -1659,4 +1667,631 @@ test('final post-processing stabilizes chance and lists for equivalent model out
   assert.equal(first.interviewChance, second.interviewChance);
   assert.deepEqual(first.strongMatches, second.strongMatches);
   assert.deepEqual(first.criticalGaps, second.criticalGaps);
+});
+
+test('AfterQuery-style talent network is skipped when ROI optimization is on', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 7.2,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Talent Network',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The resume has useful technical overlap.',
+    },
+    {
+      resumeText: 'Python React REST APIs.',
+      jobDescriptionText: 'AfterQuery talent marketplace profile pool for software engineering opportunities.',
+      optimizeForApplicationRoi: true,
+    },
+  );
+
+  assert.equal(result.jobFitScore, undefined);
+  assert.equal(result.fitScore, 7.2);
+  assert.equal(result.recommendation, SKIP);
+  assert.match(result.shortReasoning, /return on application effort/i);
+});
+
+test('AfterQuery-style talent network can apply when ROI optimization is off', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 7.2,
+      recommendation: SKIP,
+      interviewChance: '3-7%',
+      companyType: 'Talent Network',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The resume has useful technical overlap.',
+    },
+    {
+      resumeText: 'Python React REST APIs.',
+      jobDescriptionText: 'AfterQuery talent marketplace profile pool for software engineering opportunities.',
+      optimizeForApplicationRoi: false,
+    },
+  );
+
+  assert.equal(result.fitScore, 7.2);
+  assert.equal(result.recommendation, APPLY);
+});
+
+test('ROI mode changes only recommendation and reasoning for talent networks', () => {
+  const analysis = {
+    fitScore: 6.5,
+    recommendation: APPLY,
+    interviewChance: '3-7%',
+    companyType: 'Talent Network',
+    opportunityQuality: 'Medium',
+    applicationRequirements: [],
+    effortLevel: 'Low',
+    strongMatches: ['Python', 'React', 'REST APIs'],
+    criticalGaps: [],
+    shortReasoning: 'The technical fit is reasonable and the experience requirements are largely aligned.',
+  };
+  const context = {
+    resumeText: 'Python React REST APIs.',
+    jobDescriptionText: 'Talent marketplace project-based software engineering opportunity.',
+  };
+  const roiOff = applyFinalConsistencyRepair(analysis, {
+    ...context,
+    optimizeForApplicationRoi: false,
+  });
+  const roiOn = applyFinalConsistencyRepair(analysis, {
+    ...context,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(roiOff.fitScore, roiOn.fitScore);
+  assert.equal(roiOff.interviewChance, roiOn.interviewChance);
+  assert.deepEqual(roiOff.strongMatches, roiOn.strongMatches);
+  assert.deepEqual(roiOff.criticalGaps, roiOn.criticalGaps);
+  assert.equal(roiOff.recommendation, APPLY);
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.notEqual(roiOff.shortReasoning, roiOn.shortReasoning);
+  assert.equal(roiOn.technicalRecommendation, APPLY);
+  assert.equal(roiOn.roiRecommendation, SKIP);
+});
+
+test('AfterQuery-style project platform is classified as Talent Network and ROI toggle changes recommendation', () => {
+  const resumeText = 'Junior software engineer with Python, React, REST APIs, PostgreSQL, and project experience.';
+  const jobDescriptionText = `
+    AfterQuery Software Engineering Contributor
+    Requirements: 1–3 years of software engineering experience.
+    This is a project-based role where tasks are assigned project-by-project.
+    Projects are usually 10–20 hours/week for 2–3 weeks.
+    Work spans a variety of stacks and applications, supports AI labs, and gives exposure to real-world engineering problems.
+    The work can help with portfolio building through research lab and task-style engineering work.
+  `;
+  const rawAnalysis = {
+    fitScore: 7.2,
+    recommendation: APPLY,
+    interviewChance: '8-15%',
+    companyType: 'Direct Employer',
+    opportunityQuality: 'High',
+    applicationRequirements: [],
+    effortLevel: 'Low',
+    strongMatches: ['Python', 'React', 'REST APIs'],
+    criticalGaps: ['Major experience-level mismatch', '3+ years experience requirement not met'],
+    shortReasoning: 'The resume has useful technical overlap.',
+  };
+  const guarded = applyAnalysisGuardrails(rawAnalysis, { resumeText, jobDescriptionText });
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(guarded.companyType, 'Talent Network');
+  assert.equal(roiOn.companyType, 'Talent Network');
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.equal(roiOff.recommendation, APPLY);
+  assert.match(roiOn.shortReasoning, /application time|talent marketplace|project-task/i);
+  assert.equal(roiOn.criticalGaps.some((gap) => /major experience-level mismatch/i.test(gap)), false);
+  assert.equal(roiOff.criticalGaps.some((gap) => /major experience-level mismatch/i.test(gap)), false);
+  assert.equal(roiOn.criticalGaps.some((gap) => /3\+ years experience requirement not met/i.test(gap)), false);
+  assert.equal(roiOff.criticalGaps.some((gap) => /3\+ years experience requirement not met/i.test(gap)), false);
+});
+
+test('known low-ROI posting source overrides recommendation without changing technical fields', () => {
+  const resumeText = 'Python React REST APIs SQL.';
+  const jobDescriptionText = `
+    Company: Mercor
+    Software Engineer
+    Build Python APIs, React interfaces, and SQL-backed product features.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.6,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is reasonable.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(roiOn.postingSource, 'Mercor');
+  assert.equal(roiOff.postingSource, 'Mercor');
+  assert.equal(roiOff.recommendation, APPLY);
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.equal(roiOff.fitScore, roiOn.fitScore);
+  assert.equal(roiOff.interviewChance, roiOn.interviewChance);
+  assert.deepEqual(roiOff.strongMatches, roiOn.strongMatches);
+  assert.deepEqual(roiOff.criticalGaps, roiOn.criticalGaps);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+});
+
+test('known low-ROI source matching tolerates punctuation and naming differences', () => {
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.1,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['Python', 'React'],
+        criticalGaps: [],
+        shortReasoning: 'The technical fit is reasonable.',
+      },
+      {
+        resumeText: 'Python React.',
+        jobDescriptionText: 'Posting Source: FetchJobs\nSoftware Engineer role with Python and React.',
+      },
+    ),
+    {
+      resumeText: 'Python React.',
+      jobDescriptionText: 'Posting Source: FetchJobs\nSoftware Engineer role with Python and React.',
+      optimizeForApplicationRoi: true,
+    },
+  );
+
+  assert.equal(result.postingSource, 'FetchJobs');
+  assert.equal(result.recommendation, SKIP);
+});
+
+function analyzeLinkedInKnownSourceSnippet(source, { technicalRecommendation = APPLY, aboutCompany = 'Boeing' } = {}) {
+  const resumeText = 'Python React REST APIs SQL.';
+  const jobDescriptionText = `
+    ${source}
+    Share
+    Show more options
+    Software Engineer
+    United States · Remote · Full-time
+
+    About The Company
+    ${aboutCompany} builds enterprise products.
+
+    About the job
+    Build Python APIs, React interfaces, and SQL-backed product features.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.6,
+      recommendation: technicalRecommendation,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning:
+        technicalRecommendation === SKIP
+          ? 'The technical fit is limited because a core requirement is missing.'
+          : 'The technical fit is reasonable.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+
+  return {
+    roiOff: applyFinalConsistencyRepair(guarded, {
+      resumeText,
+      jobDescriptionText,
+      optimizeForApplicationRoi: false,
+    }),
+    roiOn: applyFinalConsistencyRepair(guarded, {
+      resumeText,
+      jobDescriptionText,
+      optimizeForApplicationRoi: true,
+    }),
+  };
+}
+
+test('real LinkedIn FetchJobs.co snippet keeps top posting source over About The Company', () => {
+  const { roiOn, roiOff } = analyzeLinkedInKnownSourceSnippet('FetchJobs.co', { aboutCompany: 'Boeing' });
+
+  assert.equal(roiOn.postingSource, 'FetchJobs.co');
+  assert.equal(roiOff.postingSource, 'FetchJobs.co');
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+});
+
+test('real LinkedIn Mercor snippet uses known low-ROI source explanation even for technical Skip', () => {
+  const { roiOn } = analyzeLinkedInKnownSourceSnippet('Mercor', { technicalRecommendation: SKIP });
+
+  assert.equal(roiOn.postingSource, 'Mercor');
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+});
+
+test('real LinkedIn Hire Feed snippet triggers known low-ROI source filter', () => {
+  const { roiOn } = analyzeLinkedInKnownSourceSnippet('Hire Feed');
+
+  assert.equal(roiOn.postingSource, 'Hire Feed');
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+});
+
+test('exact Hire Feed LinkedIn paste returns ROI Skip while ROI off keeps technical recommendation', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs SQL CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States · Remote · Full-time
+
+    About the job
+    Hiring for one of our clients. Build modern user interfaces with React, TypeScript, JavaScript, CSS, and REST API integration.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 8.6,
+      recommendation: STRONG_APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Staffing Agency',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'Strong technical fit for the UI role.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(guarded.postingSource, 'Hire Feed');
+  assert.equal(isKnownLowRoiSource(guarded.postingSource), true);
+  assert.equal(roiOn.postingSource, 'Hire Feed');
+  assert.equal(roiOn.technicalRecommendation, STRONG_APPLY);
+  assert.equal(roiOn.roiRecommendation, SKIP);
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+  assert.equal(roiOff.recommendation, STRONG_APPLY);
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+});
+
+test('known low-ROI source never softens technical Hard Skip', () => {
+  const resumeText = 'Internship and academic projects with React, TypeScript, JavaScript, REST APIs, SQL, CSS, and HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    Software Engineer V (Remote)
+    United States 路 Remote 路 Full-time
+
+    About the job
+    Hiring for one of our clients. Build modern user interfaces with React, TypeScript, JavaScript, CSS, and REST API integration.
+    Requirements: 8+ years of professional software engineering experience.
+    Responsibilities include lead architecture, approve code standards, and guide senior engineers.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 2.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '<1%',
+      companyType: 'Staffing Agency',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript'],
+      criticalGaps: ['8+ years experience requirement not met'],
+      shortReasoning: 'The resume has technical overlap and should apply.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(roiOn.postingSource, 'Hire Feed');
+  assert.equal(roiOff.recommendation, 'Hard Skip \u274c\u274c');
+  assert.equal(roiOn.recommendation, 'Hard Skip \u274c\u274c');
+  assert.equal(roiOn.roiRecommendation, 'Hard Skip \u274c\u274c');
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+});
+
+test('real LinkedIn Jobright.ai snippet triggers known low-ROI source filter', () => {
+  const { roiOn } = analyzeLinkedInKnownSourceSnippet('Jobright.ai');
+
+  assert.equal(roiOn.postingSource, 'Jobright.ai');
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+});
+
+test('real LinkedIn Ladders snippet triggers known low-ROI source filter', () => {
+  const { roiOn } = analyzeLinkedInKnownSourceSnippet('Ladders');
+
+  assert.equal(roiOn.postingSource, 'Ladders');
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.match(roiOn.shortReasoning, /source associated with consistently low application ROI/i);
+});
+
+test('Hire Feed-style client intermediary is staffing, not direct employer, without automatic Apply-to-Skip downgrade', () => {
+  const resumeText = 'React TypeScript REST APIs SQL.';
+  const jobDescriptionText = `
+    Hire Feed is hiring for one of our clients.
+    The role is a software engineering position with React, TypeScript, APIs, and database work.
+    The client has a normal recruiter review process.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.4,
+      recommendation: APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is reasonable.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const result = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.recommendation, APPLY);
+});
+
+test('labeled Hire Feed posting source is independently filtered even when employer type is staffing', () => {
+  const resumeText = 'React TypeScript REST APIs SQL.';
+  const jobDescriptionText = `
+    Company: Hire Feed
+    Hiring for one of our clients.
+    The role is a software engineering position with React, TypeScript, APIs, and database work.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.4,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is reasonable.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const result = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(result.postingSource, 'Hire Feed');
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.recommendation, SKIP);
+});
+
+test('Robert Half remains staffing without known-source ROI skip', () => {
+  const resumeText = 'React TypeScript REST APIs SQL.';
+  const jobDescriptionText = `
+    Company: Robert Half
+    Robert Half staffing agency is hiring for a specific client project.
+    The role includes React, TypeScript, APIs, and SQL.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.4,
+        recommendation: APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript', 'REST APIs'],
+        criticalGaps: [],
+        shortReasoning: 'The technical fit is reasonable.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: true },
+  );
+
+  assert.equal(result.postingSource, 'Robert Half');
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.recommendation, APPLY);
+});
+
+test('Motion Recruitment remains staffing without known-source ROI skip', () => {
+  const resumeText = 'React TypeScript REST APIs SQL.';
+  const jobDescriptionText = `
+    Company: Motion Recruitment
+    Motion Recruitment staffing agency is hiring for a specific client project.
+    The role includes React, TypeScript, APIs, and SQL.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.4,
+        recommendation: APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript', 'REST APIs'],
+        criticalGaps: [],
+        shortReasoning: 'The technical fit is reasonable.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: true },
+  );
+
+  assert.equal(result.postingSource, 'Motion Recruitment');
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.recommendation, APPLY);
+});
+
+test('Hire Feed-style client intermediary with high-friction unknown-client signals can downgrade to Skip', () => {
+  const resumeText = 'React TypeScript REST APIs SQL.';
+  const jobDescriptionText = `
+    Hire Feed is hiring for one of our clients with an unknown end client.
+    Candidates must complete an AI interview before human review and create a profile before matching.
+    The role involves React, TypeScript, APIs, and database work.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.4,
+      recommendation: APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is reasonable.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const result = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.recommendation, SKIP);
+  assert.match(result.shortReasoning, /intermediary|uncertain interview conversion|application time/i);
+});
+
+test('direct employer recommendation is stable across ROI toggle', () => {
+  const analysis = {
+    fitScore: 8.4,
+    recommendation: STRONG_APPLY,
+    interviewChance: '8-15%',
+    companyType: 'Direct Employer',
+    opportunityQuality: 'High',
+    applicationRequirements: [],
+    effortLevel: 'Low',
+    strongMatches: ['Python', 'React', 'REST APIs'],
+    criticalGaps: [],
+    shortReasoning: 'The resume aligns well with the role.',
+  };
+  const context = {
+    resumeText: 'Python React REST APIs.',
+    jobDescriptionText: 'Direct employer product engineering role with clear responsibilities.',
+  };
+  const roiOn = applyFinalConsistencyRepair(analysis, {
+    ...context,
+    optimizeForApplicationRoi: true,
+  });
+  const roiOff = applyFinalConsistencyRepair(analysis, {
+    ...context,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+  assert.equal(roiOn.recommendation, roiOff.recommendation);
+  assert.equal(roiOn.shortReasoning, roiOff.shortReasoning);
+});
+
+test('ROI mode never upgrades a technical recommendation', () => {
+  const analysis = {
+    fitScore: 5.4,
+    recommendation: SKIP,
+    interviewChance: '1-3%',
+    companyType: 'Talent Network',
+    opportunityQuality: 'Medium',
+    applicationRequirements: [],
+    effortLevel: 'Low',
+    strongMatches: ['Python', 'React'],
+    criticalGaps: ['Core backend ownership not demonstrated'],
+    shortReasoning: 'The technical fit is limited because a core requirement is missing.',
+  };
+  const result = applyFinalConsistencyRepair(analysis, {
+    resumeText: 'Python React.',
+    jobDescriptionText: 'Talent marketplace project-based backend opportunity.',
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(result.technicalRecommendation, SKIP);
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.roiRecommendation, SKIP);
 });

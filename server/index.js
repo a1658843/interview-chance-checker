@@ -593,6 +593,7 @@ const server = http.createServer(async (req, res) => {
   const resumeText = typeof body.resumeText === 'string' ? body.resumeText.trim() : '';
   const jobDescriptionText =
     typeof body.jobDescriptionText === 'string' ? body.jobDescriptionText.trim() : '';
+  const optimizeForApplicationRoi = body.optimizeForApplicationRoi !== false;
 
   if (!resumeText || !jobDescriptionText) {
     sendJson(res, 400, {
@@ -624,6 +625,7 @@ const server = http.createServer(async (req, res) => {
     );
     const analysis = applyFinalConsistencyRepair(normalizedAnalysis, {
       jobDescriptionText,
+      optimizeForApplicationRoi,
       resumeText,
     });
     console.log(
