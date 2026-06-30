@@ -119,7 +119,7 @@ export function ResultsPanel({
         <Sparkles className="mx-auto h-8 w-8 text-cyan-700 dark:text-cyan-400" />
         <h2 className="mt-4 text-xl font-semibold text-slate-950 dark:text-zinc-50">Results will appear here</h2>
         <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-600 dark:text-zinc-300">
-          Paste one resume and one job description to generate a first-pass analysis.
+          Add a resume and paste a job description to generate a first-pass analysis.
         </p>
       </section>
     );

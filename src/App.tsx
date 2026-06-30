@@ -1,17 +1,35 @@
-import { useEffect, useState } from 'react';
-import { ArrowRight, Info, Loader2, Moon, RotateCcw, Sun, Target } from 'lucide-react';
+import { useEffect, useRef, useState } from 'react';
+import {
+  ArrowRight,
+  CheckCircle2,
+  Info,
+  Loader2,
+  Moon,
+  Pencil,
+  RotateCcw,
+  Sun,
+  Target,
+  Trash2,
+  Upload,
+} from 'lucide-react';
 import { TextInputPanel } from './components/TextInputPanel';
 import { ResultsPanel } from './components/ResultsPanel';
 import { analyzeMatch } from './lib/analyzeMatch';
 import { analyzeWithApi } from './lib/apiAnalysis';
 import { extractApplicationRequirements, getEffortLevel } from './lib/applicationRequirements';
 import { extractEmploymentType } from './lib/employmentType';
+import { readResumeFile, ResumeImportError } from './lib/resumeImport';
+import { clearSavedResumeText, readSavedResumeText, saveResumeTextLocally } from './lib/resumeStorage';
 import { validateAnalysisInputs } from './lib/validation';
 import type { AnalysisResult } from './types/analysis';
 
 type Theme = 'light' | 'dark';
 
 const themeStorageKey = 'interview-chance-checker-theme';
+
+function getInitialResumeText() {
+  return readSavedResumeText();
+}
 
 function getInitialTheme(): Theme {
   if (typeof window === 'undefined') {
@@ -34,17 +52,29 @@ function getInitialTheme(): Theme {
 }
 
 function App() {
-  const [resumeText, setResumeText] = useState('');
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const [resumeText, setResumeText] = useState(getInitialResumeText);
+  const [isResumeTextareaVisible, setIsResumeTextareaVisible] = useState(false);
+  const [importedResumeFileName, setImportedResumeFileName] = useState<string | null>(null);
+  const [hasEditedImportedResume, setHasEditedImportedResume] = useState(false);
   const [jobDescriptionText, setJobDescriptionText] = useState('');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
+  const [resumeImportError, setResumeImportError] = useState<string | null>(null);
+  const [isImportingResume, setIsImportingResume] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [resultVersion, setResultVersion] = useState(0);
   const [optimizeForApplicationRoi, setOptimizeForApplicationRoi] = useState(true);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
 
-  const canAnalyze = resumeText.trim().length > 0 && jobDescriptionText.trim().length > 0 && !isAnalyzing;
+  const hasSavedResume = resumeText.trim().length > 0;
+  const canAnalyze = hasSavedResume && jobDescriptionText.trim().length > 0 && !isAnalyzing;
+  const isInputRowCompact = hasSavedResume && !isResumeTextareaVisible;
+  const isResumeSetupCompact = !hasSavedResume && !isResumeTextareaVisible;
+  const connectedResumeLabel = hasEditedImportedResume
+    ? 'Edited resume text'
+    : importedResumeFileName ?? 'saved resume';
 
   useEffect(() => {
     const isDark = theme === 'dark';
@@ -52,6 +82,10 @@ function App() {
     document.documentElement.classList.toggle('dark', isDark);
     document.documentElement.style.colorScheme = theme;
   }, [theme]);
+
+  useEffect(() => {
+    saveResumeTextLocally(resumeText);
+  }, [resumeText]);
 
   function setExplicitTheme(nextTheme: Theme) {
     try {
@@ -143,13 +177,70 @@ function App() {
   }
 
   function handleReset() {
-    setResumeText('');
     setJobDescriptionText('');
     setResult(null);
     setInputError(null);
     setAnalysisWarning(null);
+    setResumeImportError(null);
     setIsAnalyzing(false);
     setResultVersion(0);
+  }
+
+  async function handleResumeFileSelected(file: File | undefined) {
+    if (!file) {
+      return;
+    }
+
+    setResumeImportError(null);
+    setIsImportingResume(true);
+
+    try {
+      const importedText = await readResumeFile(file);
+      setResumeText(importedText);
+      setImportedResumeFileName(file.name);
+      setHasEditedImportedResume(false);
+      setIsResumeTextareaVisible(false);
+      setResult(null);
+      setInputError(null);
+      setAnalysisWarning(null);
+    } catch (error) {
+      setResumeImportError(
+        error instanceof ResumeImportError
+          ? error.message
+          : 'Could not import this resume file. Please try another PDF, DOCX, or TXT file.',
+      );
+    } finally {
+      setIsImportingResume(false);
+
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  }
+
+  function handleClearSavedResume() {
+    if (resumeText.trim().length === 0) {
+      clearSavedResumeText();
+      setResumeImportError(null);
+      setIsResumeTextareaVisible(false);
+      return;
+    }
+
+    const shouldClear = window.confirm('Clear the saved resume text from this browser?');
+
+    if (!shouldClear) {
+      return;
+    }
+
+    clearSavedResumeText();
+    setResumeText('');
+    setImportedResumeFileName(null);
+    setHasEditedImportedResume(false);
+    setIsResumeTextareaVisible(false);
+    setResult(null);
+    setInputError(null);
+    setAnalysisWarning(null);
+    setResumeImportError(null);
   }
 
   return (
@@ -232,29 +323,171 @@ function App() {
           </div>
         </header>
 
-        <section className="grid gap-4 lg:grid-cols-2">
-          <TextInputPanel
-            label="Resume Text"
-            helper="Paste the resume content as plain text."
-            placeholder="Paste resume text here..."
-            value={resumeText}
-            onChange={(value) => {
-              setResumeText(value);
-              setInputError(null);
-              setAnalysisWarning(null);
-            }}
+        <section className="space-y-4">
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".pdf,.docx,.txt,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain"
+            className="sr-only"
+            aria-label="Import resume file"
+            onChange={(event) => handleResumeFileSelected(event.target.files?.[0])}
           />
-          <TextInputPanel
-            label="Job Description"
-            helper="Paste the exact job description for the target role."
-            placeholder="Paste job description here..."
-            value={jobDescriptionText}
-            onChange={(value) => {
-              setJobDescriptionText(value);
-              setInputError(null);
-              setAnalysisWarning(null);
-            }}
-          />
+          {isResumeSetupCompact ? (
+            <article className="rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">Add your resume</h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+                    Upload a PDF, DOCX, or TXT file, or paste resume text.
+                  </p>
+                  <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-zinc-400">
+                    Saved locally in this browser
+                  </p>
+                  {resumeImportError ? (
+                    <p className="mt-1 text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
+                      {resumeImportError}
+                    </p>
+                  ) : null}
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => fileInputRef.current?.click()}
+                    disabled={isImportingResume}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+                  >
+                    {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                    {isImportingResume ? 'Importing...' : 'Import resume'}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setResumeImportError(null);
+                      setIsResumeTextareaVisible(true);
+                    }}
+                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
+                  >
+                    <Pencil className="h-3.5 w-3.5" />
+                    Paste resume text
+                  </button>
+                </div>
+              </div>
+            </article>
+          ) : null}
+          <div className={isInputRowCompact || isResumeSetupCompact ? '' : 'grid gap-4 lg:grid-cols-2'}>
+            {!isInputRowCompact && !isResumeSetupCompact ? (
+              <TextInputPanel
+                id="resume-text"
+                label="Resume Text"
+                helper="Paste resume text or import a PDF, DOCX, or TXT file."
+                placeholder="Paste resume text here..."
+                value={resumeText}
+                onChange={(value) => {
+                  setResumeText(value);
+                  if (importedResumeFileName) {
+                    setHasEditedImportedResume(true);
+                  }
+                  setInputError(null);
+                  setAnalysisWarning(null);
+                  setResumeImportError(null);
+                }}
+                note="Saved locally in this browser"
+                error={resumeImportError}
+                disabled={isImportingResume}
+                textareaActions={
+                  resumeText.trim().length > 0 ? (
+                    <button
+                      type="button"
+                      onClick={() => setIsResumeTextareaVisible(false)}
+                      className="inline-flex h-8 items-center justify-center rounded-md px-2 text-xs font-semibold text-slate-500 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-400 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
+                    >
+                      {importedResumeFileName ? 'Hide extracted text' : 'Use pasted text'}
+                    </button>
+                  ) : null
+                }
+                actions={
+                  <>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isImportingResume}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-100 disabled:text-slate-400 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900 dark:disabled:bg-zinc-900 dark:disabled:text-zinc-500"
+                    >
+                      {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {isImportingResume ? 'Importing...' : 'Import Resume'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearSavedResume}
+                      disabled={isImportingResume || resumeText.trim().length === 0}
+                      className="inline-flex h-9 items-center justify-center gap-2 rounded-md px-2 text-xs font-semibold text-slate-500 transition-colors duration-150 ease-out hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-400 dark:hover:text-rose-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Clear saved resume
+                    </button>
+                  </>
+                }
+              />
+            ) : null}
+            <TextInputPanel
+              id="job-description-text"
+              label="Job Description"
+              helper="Paste the exact job description for the target role."
+              placeholder="Paste job description here..."
+              value={jobDescriptionText}
+              actions={
+                isInputRowCompact ? (
+                  <div className="flex max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold">
+                    <span className="inline-flex min-w-0 items-center gap-1.5 text-slate-600 dark:text-zinc-300">
+                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-700 dark:text-cyan-300" aria-hidden="true" />
+                      <span className="min-w-0 truncate">
+                        <span className="text-slate-500 dark:text-zinc-400">Using </span>
+                        {connectedResumeLabel}
+                      </span>
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isImportingResume}
+                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
+                    >
+                      {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                      {isImportingResume ? 'Importing...' : 'Replace'}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setIsResumeTextareaVisible(true)}
+                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
+                    >
+                      <Pencil className="h-3.5 w-3.5" />
+                      Edit text
+                    </button>
+                    <button
+                      type="button"
+                      onClick={handleClearSavedResume}
+                      disabled={isImportingResume}
+                      aria-label="Clear saved resume"
+                      title="Clear saved resume"
+                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-500 transition-colors duration-150 ease-out hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-400 dark:hover:text-rose-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
+                    >
+                      <Trash2 className="h-3.5 w-3.5" />
+                      Clear
+                    </button>
+                    {resumeImportError ? (
+                      <span className="basis-full text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
+                        {resumeImportError}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : undefined
+              }
+              onChange={(value) => {
+                setJobDescriptionText(value);
+                setInputError(null);
+                setAnalysisWarning(null);
+              }}
+            />
+          </div>
         </section>
 
         <ResultsPanel
