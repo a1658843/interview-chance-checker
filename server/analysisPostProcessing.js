@@ -1341,6 +1341,63 @@ function getStrongMatchCount(analysis) {
   return Array.isArray(analysis?.strongMatches) ? analysis.strongMatches.length : 0;
 }
 
+function getCriticalGapTexts(analysis) {
+  return Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps : [];
+}
+
+function isDecisionChangingRequiredGap(gap) {
+  const value = String(gap ?? '');
+
+  return /\b(required|mandatory|must[- ]have|core|central|production|deployment|cloud|aws|azure|gcp|node\.?js|backend|frontend|domain|platform|java|ios|swift|android|kotlin|salesforce|servicenow|sap|camunda|flowable|bpmn|edi|security clearance)\b/i.test(
+    value,
+  );
+}
+
+function hasEvidenceBackedMismatchReasoning(analysis) {
+  const reasoning = String(analysis?.shortReasoning ?? '');
+
+  if (
+    !/\b(major mismatch|significant mismatch|not worth prioritizing|too large to justify)\b/i.test(
+      reasoning,
+    )
+  ) {
+    return false;
+  }
+
+  const criticalGaps = getCriticalGapTexts(analysis);
+  return criticalGaps.some(isDecisionChangingRequiredGap) || criticalGaps.length >= 2;
+}
+
+function normalizeRecommendationWithEvidenceConsistency(analysis) {
+  const recommendationType = getRecommendationType(analysis?.recommendation);
+  const criticalGaps = getCriticalGapTexts(analysis);
+  const decisionChangingGapCount = criticalGaps.filter(isDecisionChangingRequiredGap).length;
+  const strongMatchCount = getStrongMatchCount(analysis);
+
+  if (recommendationType === 'Strong Apply') {
+    if (decisionChangingGapCount > 0 || hasEvidenceBackedMismatchReasoning(analysis)) {
+      return {
+        ...analysis,
+        recommendation: 'Apply \u2705',
+      };
+    }
+  }
+
+  if (recommendationType === 'Apply') {
+    if (
+      (decisionChangingGapCount >= 2 && strongMatchCount <= 2) ||
+      hasEvidenceBackedMismatchReasoning(analysis)
+    ) {
+      return {
+        ...analysis,
+        recommendation: 'Skip \u274c',
+      };
+    }
+  }
+
+  return analysis;
+}
+
 function hasExtremeMismatchForHardSkip(analysis) {
   const criticalGaps = Array.isArray(analysis?.criticalGaps) ? analysis.criticalGaps.join(' ') : '';
   const interviewChanceUpperBound = getInterviewChanceUpperBound(analysis?.interviewChance);
@@ -1763,6 +1820,35 @@ function getDeterministicFitScore(analysis) {
   return Number.isFinite(score) ? score : 0;
 }
 
+function getStableDisplayedFitScore(analysis) {
+  const score = Number(analysis?.fitScore ?? 0);
+  if (!Number.isFinite(score)) {
+    return 0;
+  }
+
+  if (
+    analysis?.educationGate === 'Severe Gap' ||
+    analysis?.experienceGate === 'Severe Gap' ||
+    analysis?.levelGap === 'Severe'
+  ) {
+    return Number(score.toFixed(1));
+  }
+
+  const criticalGaps = getCriticalGapTexts(analysis);
+  const strongMatchCount = getStrongMatchCount(analysis);
+  const decisionChangingGapCount = criticalGaps.filter(isDecisionChangingRequiredGap).length;
+
+  if (decisionChangingGapCount >= 2 && score >= 9) {
+    return 8.0;
+  }
+
+  if (criticalGaps.length === 0 && strongMatchCount >= 2 && score >= 7.5 && score < 9) {
+    return 8.5;
+  }
+
+  return Number(score.toFixed(1));
+}
+
 function getDeterministicRecommendation(analysis) {
   const score = Number(analysis?.fitScore ?? 0);
   let recommendation;
@@ -1947,10 +2033,10 @@ function canonicalizeFinalAnalysis(analysis, { jobDescriptionText, resumeText })
     criticalGaps: normalizeFinalCriticalGaps(scoreCalibratedAnalysis, jobDescriptionText),
   };
 
-  return {
+  return normalizeRecommendationWithEvidenceConsistency({
     ...chanceCalibratedAnalysis,
     recommendation: getDeterministicRecommendation(chanceCalibratedAnalysis),
-  };
+  });
 }
 
 export function applyFinalConsistencyRepair(
@@ -2009,6 +2095,7 @@ export function applyFinalConsistencyRepair(
 
   return stripInternalFields({
     ...selectedAnalysis,
+    fitScore: getStableDisplayedFitScore(selectedAnalysis),
     technicalRecommendation: technicalAnalysis.recommendation,
     technicalReasoning: technicalAnalysis.shortReasoning,
     roiRecommendation: roiStrategyAnalysis.recommendation,

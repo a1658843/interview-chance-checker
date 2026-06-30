@@ -1567,6 +1567,107 @@ test('final repair prevents Apply when reasoning states a major experience-level
   assert.equal(result.interviewChance, '3-7%');
 });
 
+test('Strong Apply with required AWS and Node.js critical gaps normalizes to Apply', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.4,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: ['Required AWS production experience', 'Required Node.js backend experience'],
+      shortReasoning: 'Strong Apply because there is strong frontend and API overlap.',
+    },
+    {
+      resumeText: 'React TypeScript REST APIs',
+      jobDescriptionText:
+        'Requirements: React, TypeScript, REST APIs, AWS production experience, and Node.js backend experience.',
+    },
+  );
+
+  assert.equal(result.recommendation, APPLY);
+  assert.equal(result.fitScore, 8.4);
+  assert.equal(result.interviewChance, '8-15%');
+});
+
+test('Apply with multiple major required gaps and weak strong matches normalizes to Skip', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 7.2,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React'],
+      criticalGaps: ['Required AWS production experience', 'Required Node.js backend experience'],
+      shortReasoning: 'Apply because there is some frontend overlap.',
+    },
+    {
+      resumeText: 'React',
+      jobDescriptionText:
+        'Requirements: React, AWS production experience, and Node.js backend experience for production services.',
+    },
+  );
+
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.fitScore, 7.2);
+  assert.equal(result.interviewChance, '8-15%');
+});
+
+test('Strong Apply with evidence-backed major mismatch reasoning normalizes to Apply', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.2,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'REST APIs', 'SQL'],
+      criticalGaps: ['Required cloud deployment experience'],
+      shortReasoning: 'Strong Apply, but there is a major mismatch around required cloud deployment ownership.',
+    },
+    {
+      resumeText: 'Python REST APIs SQL',
+      jobDescriptionText: 'Requirements: Python, REST APIs, SQL, and cloud deployment experience.',
+    },
+  );
+
+  assert.equal(result.recommendation, APPLY);
+  assert.equal(result.fitScore, 8.2);
+});
+
+test('Apply with too-large-to-justify reasoning and matching critical gaps normalizes to Skip', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 7.1,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'REST APIs'],
+      criticalGaps: ['Required cloud deployment experience'],
+      shortReasoning: 'Apply, but the required cloud deployment gap is too large to justify prioritizing.',
+    },
+    {
+      resumeText: 'React REST APIs',
+      jobDescriptionText: 'Requirements: React, REST APIs, and cloud deployment experience.',
+    },
+  );
+
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.fitScore, 7.1);
+  assert.equal(result.interviewChance, '8-15%');
+});
+
 test('critical gaps dedupe duplicate years requirement wording', () => {
   const result = applyFinalConsistencyRepair(
     {
@@ -1667,6 +1768,164 @@ test('final post-processing stabilizes chance and lists for equivalent model out
   assert.equal(first.interviewChance, second.interviewChance);
   assert.deepEqual(first.strongMatches, second.strongMatches);
   assert.deepEqual(first.criticalGaps, second.criticalGaps);
+});
+
+test('Hire Feed UI Engineer equivalent evidence stabilizes displayed fit score', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs SQL CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States 路 Remote 路 Full-time
+
+    About the job
+    Hiring for one of our clients. Build modern user interfaces with React, TypeScript, JavaScript, CSS, and REST API integration.
+  `;
+  const analyzeFromModelScore = (fitScore) => {
+    const guarded = applyAnalysisGuardrails(
+      {
+        fitScore,
+        recommendation: STRONG_APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Staffing Agency',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+        criticalGaps: [],
+        shortReasoning: 'Strong technical fit for the UI role.',
+      },
+      { resumeText, jobDescriptionText },
+    );
+
+    return applyFinalConsistencyRepair(guarded, {
+      resumeText,
+      jobDescriptionText,
+      optimizeForApplicationRoi: true,
+    });
+  };
+  const first = analyzeFromModelScore(7.5);
+  const second = analyzeFromModelScore(8.5);
+
+  assert.equal(first.fitScore, second.fitScore);
+  assert.equal(first.fitScore, 8.5);
+  assert.equal(first.recommendation, SKIP);
+  assert.equal(second.recommendation, SKIP);
+  assert.deepEqual(first.strongMatches, second.strongMatches);
+  assert.deepEqual(first.criticalGaps, second.criticalGaps);
+});
+
+test('ROI on and off do not change stabilized fit score', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs SQL CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States 路 Remote 路 Full-time
+
+    About the job
+    Hiring for one of our clients. Build modern user interfaces with React, TypeScript, JavaScript, CSS, and REST API integration.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Staffing Agency',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'Strong technical fit for the UI role.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.fitScore, 8.5);
+});
+
+test('severe senior mismatch keeps low stabilized fit score', () => {
+  const resumeText = 'Internship and academic projects with React and TypeScript.';
+  const jobDescriptionText = 'Software Engineer V. Requirements: 8+ years of professional software engineering experience.';
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 8.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript'],
+      criticalGaps: ['8+ years experience requirement not met'],
+      shortReasoning: 'The resume has stack overlap.',
+    },
+    {
+      resumeText,
+      jobDescriptionText,
+    },
+  );
+  const result = applyFinalConsistencyRepair(guarded, { resumeText, jobDescriptionText });
+
+  assert.equal(result.fitScore, 2.5);
+  assert.equal(result.recommendation, 'Hard Skip \u274c\u274c');
+});
+
+test('strong technical direct employer match remains high after score stabilization', () => {
+  const resumeText = 'Python React TypeScript REST APIs PostgreSQL Docker.';
+  const jobDescriptionText = `
+    Direct employer Software Engineer role.
+    Requirements: Python, React, TypeScript, REST APIs, PostgreSQL, and Docker.
+    Responsibilities include product engineering on a clear internal team.
+  `;
+  const first = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.1,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'React', 'TypeScript', 'REST APIs', 'PostgreSQL', 'Docker'],
+      criticalGaps: [],
+      shortReasoning: 'The resume aligns strongly with the core role.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const second = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.7,
+      recommendation: STRONG_APPLY,
+      interviewChance: '8-15%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Docker', 'PostgreSQL', 'REST APIs', 'TypeScript', 'React', 'Python'],
+      criticalGaps: [],
+      shortReasoning: 'The resume aligns strongly with the core role.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+
+  assert.equal(first.fitScore, second.fitScore);
+  assert.equal(first.fitScore, 8.5);
+  assert.ok(first.fitScore >= 8);
 });
 
 test('AfterQuery-style talent network is skipped when ROI optimization is on', () => {
