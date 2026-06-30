@@ -1816,6 +1816,293 @@ test('Hire Feed UI Engineer equivalent evidence stabilizes displayed fit score',
   assert.deepEqual(first.criticalGaps, second.criticalGaps);
 });
 
+test('Hire Feed UI Engineer required frontend gaps are deterministic across model variants', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States · Remote · Full-time
+
+    Requirements: React, TypeScript, JavaScript, CSS, REST API integration, SASS or LESS, and state management libraries like Redux or Context.
+  `;
+  const analyzeVariant = ({ fitScore, recommendation, interviewChance, criticalGaps }) => {
+    const guarded = applyAnalysisGuardrails(
+      {
+        fitScore,
+        recommendation,
+        interviewChance,
+        companyType: 'Staffing Agency',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+        criticalGaps,
+        shortReasoning: 'The UI stack is a strong match.',
+      },
+      { resumeText, jobDescriptionText },
+    );
+
+    return applyFinalConsistencyRepair(guarded, {
+      resumeText,
+      jobDescriptionText,
+      optimizeForApplicationRoi: false,
+    });
+  };
+  const omittedGaps = analyzeVariant({
+    fitScore: 8.5,
+    recommendation: STRONG_APPLY,
+    interviewChance: '5-10%',
+    criticalGaps: [],
+  });
+  const partialGaps = analyzeVariant({
+    fitScore: 7.5,
+    recommendation: APPLY,
+    interviewChance: '3-7%',
+    criticalGaps: ['SASS or LESS experience not demonstrated'],
+  });
+
+  assert.deepEqual(omittedGaps.criticalGaps, [
+    'SASS or LESS experience not demonstrated',
+    'State management libraries (Redux, Context API) experience not demonstrated',
+  ]);
+  assert.deepEqual(partialGaps.criticalGaps, omittedGaps.criticalGaps);
+  assert.equal(omittedGaps.fitScore, partialGaps.fitScore);
+  assert.equal(omittedGaps.fitScore, 8.0);
+  assert.equal(omittedGaps.recommendation, APPLY);
+  assert.equal(partialGaps.recommendation, APPLY);
+  assert.equal(omittedGaps.interviewChance, partialGaps.interviewChance);
+  assert.equal(omittedGaps.interviewChance, '5-10%');
+  assert.deepEqual(omittedGaps.strongMatches, partialGaps.strongMatches);
+});
+
+test('Hire Feed required familiarity with state management stays in canonical critical gaps every run', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States · Remote · Full-time
+
+    Required Skills & Qualifications
+    Experience with React, TypeScript, JavaScript, CSS, REST API integration, and SASS or LESS.
+    Familiarity with state management libraries (e.g., Redux, Context API) and asynchronous programming.
+  `;
+  const rawVariants = [
+    {
+      fitScore: 8.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '5-10%',
+      criticalGaps: [],
+    },
+    {
+      fitScore: 8.0,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      criticalGaps: ['SASS or LESS experience not demonstrated'],
+    },
+    {
+      fitScore: 8.2,
+      recommendation: STRONG_APPLY,
+      interviewChance: '3-7%',
+      criticalGaps: ['State management libraries (Redux, Context API) experience not demonstrated'],
+    },
+  ];
+
+  const results = rawVariants.map((variant) =>
+    applyFinalConsistencyRepair(
+      applyAnalysisGuardrails(
+        {
+          ...variant,
+          companyType: 'Staffing Agency',
+          opportunityQuality: 'Medium',
+          applicationRequirements: [],
+          effortLevel: 'Low',
+          strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+          shortReasoning: 'The UI stack is a strong match.',
+        },
+        { resumeText, jobDescriptionText },
+      ),
+      {
+        resumeText,
+        jobDescriptionText,
+        optimizeForApplicationRoi: true,
+      },
+    ),
+  );
+
+  for (const result of results) {
+    assert.deepEqual(result.criticalGaps, [
+      'SASS or LESS experience not demonstrated',
+      'State management libraries (Redux, Context API) experience not demonstrated',
+    ]);
+    assert.equal(result.fitScore, results[0].fitScore);
+    assert.equal(result.interviewChance, results[0].interviewChance);
+    assert.equal(result.recommendation, SKIP);
+  }
+});
+
+test('Hire Feed frontend gap wording variants collapse to canonical critical gaps', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States 路 Remote 路 Full-time
+
+    Required Skills & Qualifications
+    Experience with React, TypeScript, JavaScript, CSS, REST API integration, and SASS or LESS.
+    Familiarity with state management libraries (e.g., Redux, Context API) and asynchronous programming.
+  `;
+  const rawGapVariants = [
+    [
+      'CSS preprocessors (SASS or LESS) not shown',
+      'State management libraries (Redux, Context API) not shown',
+    ],
+    ['Sass/Less not demonstrated', 'Redux/Context API not demonstrated'],
+    ['Missing Sass or Less', 'State management experience missing'],
+    [
+      'CSS preprocessors (SASS or LESS) not shown',
+      'SASS or LESS experience not demonstrated',
+      'State management libraries (Redux, Context API) not shown',
+      'State management libraries (Redux, Context API) experience not demonstrated',
+    ],
+  ];
+
+  for (const criticalGaps of rawGapVariants) {
+    const result = applyFinalConsistencyRepair(
+      applyAnalysisGuardrails(
+        {
+          fitScore: 8.5,
+          recommendation: STRONG_APPLY,
+          interviewChance: '5-10%',
+          companyType: 'Staffing Agency',
+          opportunityQuality: 'Medium',
+          applicationRequirements: [],
+          effortLevel: 'Low',
+          strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+          criticalGaps,
+          shortReasoning: 'The UI stack is a strong match.',
+        },
+        { resumeText, jobDescriptionText },
+      ),
+      {
+        resumeText,
+        jobDescriptionText,
+        optimizeForApplicationRoi: false,
+      },
+    );
+
+    assert.deepEqual(result.criticalGaps, [
+      'SASS or LESS experience not demonstrated',
+      'State management libraries (Redux, Context API) experience not demonstrated',
+    ]);
+  }
+});
+
+test('frontend equivalent evidence suppresses SASS and state-management critical gaps', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS Sass Redux Context API.';
+  const jobDescriptionText = `
+    Requirements: React, TypeScript, SASS or LESS, and state management libraries like Redux or Context.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 8.5,
+        recommendation: STRONG_APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend stack is closely aligned.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.some((gap) => /sass|less|state management/i.test(gap)), false);
+});
+
+test('preferred-only frontend skills do not create deterministic critical gaps', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Requirements: React and TypeScript.
+    Preferred: SASS or LESS and state management libraries like Redux or Context.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 8.5,
+        recommendation: STRONG_APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend stack is closely aligned.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.some((gap) => /sass|less|state management/i.test(gap)), false);
+});
+
+test('ROI skips Hire Feed without changing deterministic technical evidence', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Hire Feed
+    Share
+    Show more options
+    UI Engineer (Remote)
+    United States · Remote · Full-time
+
+    Requirements: React, TypeScript, JavaScript, CSS, REST API integration, SASS or LESS, and state management libraries like Redux or Context.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 8.5,
+      recommendation: STRONG_APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Staffing Agency',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'TypeScript', 'JavaScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The UI stack is a strong match.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(roiOff.recommendation, APPLY);
+  assert.equal(roiOn.recommendation, SKIP);
+  assert.equal(roiOn.fitScore, roiOff.fitScore);
+  assert.equal(roiOn.interviewChance, roiOff.interviewChance);
+  assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+  assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
+});
+
 test('ROI on and off do not change stabilized fit score', () => {
   const resumeText = 'React TypeScript JavaScript REST APIs SQL CSS HTML.';
   const jobDescriptionText = `

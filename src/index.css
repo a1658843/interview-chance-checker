@@ -4,22 +4,39 @@
 
 :root {
   color: #14213d;
-  background: #f6f7fb;
+  background: #f3f4f6;
+  color-scheme: light;
   font-synthesis: none;
   text-rendering: optimizeLegibility;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+.dark {
+  color: #e2e8f0;
+  background: #18181b;
+  color-scheme: dark;
+}
+
 body {
   min-width: 320px;
   min-height: 100vh;
   margin: 0;
+  background: inherit;
 }
 
 button,
 textarea {
   font: inherit;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  ::before,
+  ::after {
+    transition-duration: 0.01ms !important;
+    transition-delay: 0ms !important;
+  }
 }
 
 @media (prefers-reduced-motion: no-preference) {

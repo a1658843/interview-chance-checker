@@ -36,6 +36,10 @@ function hasPreferredLanguage(sentence) {
   return /\b(preferred|desired|nice[- ]to[- ]have|nice to have|bonus|bonus points?|plus|familiarity|exposure|knowledge of or interest in|interest in|technologies such as|ability to learn quickly|learn quickly|not candidates who already have experience with every technology)\b/i.test(sentence);
 }
 
+function hasExplicitPreferredLanguage(sentence) {
+  return /\b(preferred|desired|nice[- ]to[- ]have|nice to have|bonus|bonus points?|plus|pluses?|extra credit)\b/i.test(sentence);
+}
+
 function hasRequiredLanguage(sentence) {
   return /\b(required|requirement|requirements|must have|must-have|minimum qualifications|qualifications|you have|need)\b/i.test(sentence);
 }
@@ -57,7 +61,7 @@ function getRequirementHeadingLevel(line) {
   }
 
   if (
-    /^(required qualifications?|requirements?|must haves?|minimum qualifications?|what you'?ll need|what you will need|qualifications?|what you bring|you have)$/i.test(
+    /^(required qualifications?|required skills?(?:\s*(?:&|and)\s*qualifications?)?|requirements?|must haves?|minimum qualifications?|what you'?ll need|what you will need|qualifications?|what you bring|you have)$/i.test(
       heading,
     )
   ) {
@@ -86,6 +90,10 @@ function getInlineRequirementLevel(sentence, sectionLevel) {
 
   if (/\b(desired|ideal candidate)\b/i.test(sentence)) {
     return 'desired';
+  }
+
+  if (sectionLevel === 'required' && !hasExplicitPreferredLanguage(sentence)) {
+    return 'required';
   }
 
   if (hasPreferredLanguage(sentence)) {
@@ -1348,7 +1356,7 @@ function getCriticalGapTexts(analysis) {
 function isDecisionChangingRequiredGap(gap) {
   const value = String(gap ?? '');
 
-  return /\b(required|mandatory|must[- ]have|core|central|production|deployment|cloud|aws|azure|gcp|node\.?js|backend|frontend|domain|platform|java|ios|swift|android|kotlin|salesforce|servicenow|sap|camunda|flowable|bpmn|edi|security clearance)\b/i.test(
+  return /\b(required|mandatory|must[- ]have|core|central|production|deployment|cloud|aws|azure|gcp|node\.?js|backend|frontend|domain|platform|java|ios|swift|android|kotlin|salesforce|servicenow|sap|camunda|flowable|bpmn|edi|security clearance|sass|less|state management)\b/i.test(
     value,
   );
 }
@@ -1842,8 +1850,28 @@ function getStableDisplayedFitScore(analysis) {
     return 8.0;
   }
 
+  if (criticalGaps.some(isDeterministicRequiredSkillGap) && score >= 7.5 && score < 9) {
+    return 8.0;
+  }
+
   if (criticalGaps.length === 0 && strongMatchCount >= 2 && score >= 7.5 && score < 9) {
     return 8.5;
+  }
+
+  return Number(score.toFixed(1));
+}
+
+function getEvidenceStabilizedFitScore(analysis) {
+  const score = Number(analysis?.fitScore ?? 0);
+
+  if (!Number.isFinite(score)) {
+    return 0;
+  }
+
+  const criticalGaps = getCriticalGapTexts(analysis);
+
+  if (criticalGaps.some(isDeterministicRequiredSkillGap) && score >= 7.5 && score < 9) {
+    return 8.0;
   }
 
   return Number(score.toFixed(1));
@@ -1904,8 +1932,47 @@ function getCriticalGapPriority(gap) {
   return 3;
 }
 
-function getCriticalGapSemanticKey(gap) {
+const sassLessCriticalGap = 'SASS or LESS experience not demonstrated';
+const stateManagementCriticalGap = 'State management libraries (Redux, Context API) experience not demonstrated';
+
+function isSassLessCriticalGap(gap) {
   const value = String(gap ?? '').toLowerCase();
+  const mentionsSassLess = /\bsass\b|\bscss\b|\bsass\s*\/\s*less\b|\bsass\s+or\s+less\b/i.test(value);
+  const mentionsLessAsCss = /\bless\b/i.test(value) && /\b(css|sass|scss|preprocessors?)\b/i.test(value);
+  const mentionsCssPreprocessor = /\bcss\s+preprocessors?\b/i.test(value);
+
+  return mentionsSassLess || mentionsLessAsCss || mentionsCssPreprocessor;
+}
+
+function isStateManagementCriticalGap(gap) {
+  const value = String(gap ?? '').toLowerCase();
+
+  return /\bstate management\b|\bredux\b|\bcontext api\b|\breact context\b/i.test(value);
+}
+
+function canonicalizeCriticalGapDisplay(gap) {
+  if (isSassLessCriticalGap(gap)) {
+    return sassLessCriticalGap;
+  }
+
+  if (isStateManagementCriticalGap(gap)) {
+    return stateManagementCriticalGap;
+  }
+
+  return gap;
+}
+
+function getCriticalGapSemanticKey(gap) {
+  const canonicalGap = canonicalizeCriticalGapDisplay(gap);
+  const value = String(canonicalGap ?? '').toLowerCase();
+
+  if (canonicalGap === sassLessCriticalGap) {
+    return 'sass-less';
+  }
+
+  if (canonicalGap === stateManagementCriticalGap) {
+    return 'state-management';
+  }
 
   if (/\b(major|severe|moderate)?\s*experience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
     return 'experience-level';
@@ -1945,7 +2012,7 @@ function chooseClearerCriticalGap(current, next) {
 }
 
 function dedupeCriticalGapsByMeaning(gaps) {
-  const normalized = normalizeStringList(gaps);
+  const normalized = normalizeStringList(normalizeStringList(gaps).map(canonicalizeCriticalGapDisplay));
   const byKey = new Map();
 
   for (const gap of normalized) {
@@ -1993,7 +2060,101 @@ function isRequiredBackedCriticalGap(gap, jobDescriptionText) {
   );
 }
 
-function normalizeFinalCriticalGaps(analysis, jobDescriptionText) {
+function normalizeSkillText(value) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/node\.js/g, 'nodejs')
+    .replace(/vue\.js/g, 'vuejs')
+    .replace(/react\.js/g, 'reactjs')
+    .replace(/context\s+api/g, 'contextapi')
+    .replace(/react\s+context/g, 'reactcontext')
+    .replace(/[^a-z0-9+#]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasSkillPhrase(text, phrase) {
+  const normalizedText = normalizeSkillText(text);
+  const normalizedPhrase = normalizeSkillText(phrase);
+
+  if (!normalizedText || !normalizedPhrase) {
+    return false;
+  }
+
+  return new RegExp(`(^| )${normalizedPhrase.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}( |$)`).test(
+    normalizedText,
+  );
+}
+
+const deterministicRequiredSkillGapCatalog = [
+  {
+    canonicalGap: sassLessCriticalGap,
+    jobSignals: ['sass', 'scss', 'less', 'css preprocessor', 'css preprocessors'],
+    resumeSignals: ['sass', 'scss', 'less', 'css preprocessor', 'css preprocessors'],
+  },
+  {
+    canonicalGap: stateManagementCriticalGap,
+    jobSignals: [
+      'state management',
+      'state management libraries',
+      'redux',
+      'context api',
+      'react context',
+      'zustand',
+      'mobx',
+    ],
+    resumeSignals: ['redux', 'context api', 'react context', 'zustand', 'mobx', 'state management'],
+  },
+];
+
+function isDeterministicRequiredSkillGap(gap) {
+  return deterministicRequiredSkillGapCatalog.some(({ canonicalGap }) => canonicalGap === gap);
+}
+
+function isExplicitSkillRequirementSentence(sentence, level) {
+  if (level === 'required') {
+    return true;
+  }
+
+  if (level !== 'unknown') {
+    return false;
+  }
+
+  return /\b(requirements?|required|must(?: have)?|need(?:ed)?|proficien(?:t|cy)|experience with|skills? include|tech stack|stack includes|using|with)\b/i.test(
+    sentence,
+  );
+}
+
+function getDeterministicRequiredSkillGaps(resumeText, jobDescriptionText) {
+  const requirementSentences = parseJobRequirementSentences(jobDescriptionText).filter(
+    ({ sentence, level }) =>
+      !['preferred', 'desired', 'bonus'].includes(level) &&
+      (level === 'required' || !hasPreferredLanguage(sentence)) &&
+      isExplicitSkillRequirementSentence(sentence, level),
+  );
+
+  const gaps = [];
+
+  for (const { canonicalGap, jobSignals, resumeSignals } of deterministicRequiredSkillGapCatalog) {
+    const isRequiredByJob = requirementSentences.some(({ sentence }) =>
+      jobSignals.some((signal) => hasSkillPhrase(sentence, signal)),
+    );
+
+    if (!isRequiredByJob) {
+      continue;
+    }
+
+    const isSupportedByResume = resumeSignals.some((signal) => hasSkillPhrase(resumeText, signal));
+
+    if (!isSupportedByResume) {
+      gaps.push(canonicalGap);
+    }
+  }
+
+  return gaps;
+}
+
+function normalizeFinalCriticalGaps(analysis, { jobDescriptionText, resumeText }) {
   const deterministicGaps = [];
   const requiredYears = analysis?.requiredExperienceYears ?? getRequiredExperienceYears(jobDescriptionText);
   const experienceGate = analysis?.experienceGate;
@@ -2014,7 +2175,9 @@ function normalizeFinalCriticalGaps(analysis, jobDescriptionText) {
       isRequiredBackedCriticalGap(gap, jobDescriptionText),
   );
 
-  return sortCriticalGaps([...deterministicGaps, ...modelGaps]).slice(0, 5);
+  const requiredSkillGaps = getDeterministicRequiredSkillGaps(resumeText, jobDescriptionText);
+
+  return sortCriticalGaps([...deterministicGaps, ...modelGaps, ...requiredSkillGaps]).slice(0, 5);
 }
 
 function canonicalizeFinalAnalysis(analysis, { jobDescriptionText, resumeText }) {
@@ -2022,15 +2185,22 @@ function canonicalizeFinalAnalysis(analysis, { jobDescriptionText, resumeText })
     ...analysis,
     fitScore: getDeterministicFitScore(analysis),
   };
-  const chanceCalibratedAnalysis = {
+  const evidenceCalibratedAnalysis = {
     ...scoreCalibratedAnalysis,
-    interviewChance: getDeterministicInterviewChance(scoreCalibratedAnalysis, jobDescriptionText),
     applicationRequirements: normalizeStringList(scoreCalibratedAnalysis?.applicationRequirements),
     strongMatches: normalizeStrongMatches(scoreCalibratedAnalysis?.strongMatches, {
       resumeText,
       jobDescriptionText,
     }),
-    criticalGaps: normalizeFinalCriticalGaps(scoreCalibratedAnalysis, jobDescriptionText),
+    criticalGaps: normalizeFinalCriticalGaps(scoreCalibratedAnalysis, { jobDescriptionText, resumeText }),
+  };
+  const fitCalibratedAnalysis = {
+    ...evidenceCalibratedAnalysis,
+    fitScore: getEvidenceStabilizedFitScore(evidenceCalibratedAnalysis),
+  };
+  const chanceCalibratedAnalysis = {
+    ...fitCalibratedAnalysis,
+    interviewChance: getDeterministicInterviewChance(fitCalibratedAnalysis, jobDescriptionText),
   };
 
   return normalizeRecommendationWithEvidenceConsistency({
