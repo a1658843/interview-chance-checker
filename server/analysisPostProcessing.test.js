@@ -2198,6 +2198,209 @@ test('preferred-only frontend skills do not create deterministic critical gaps',
   assert.equal(result.criticalGaps.some((gap) => /sass|less|state management/i.test(gap)), false);
 });
 
+test('Atlassian-like distributed systems gap is deterministic when the model omits it', () => {
+  const resumeText = 'Python React REST APIs Docker PostgreSQL academic projects and internship work.';
+  const jobDescriptionText = `
+    LinkedIn Job Posting
+    Title: Software Engineer
+    Company: Atlassian
+
+    Required Qualifications
+    3+ years of professional software engineering experience required.
+    Backend engineering experience with distributed systems and data-heavy platforms.
+    Experience with event streaming systems including Kafka, Kinesis, SQS, or Flink.
+    JVM-based languages such as Java or Kotlin.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.8,
+        recommendation: APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['REST APIs'],
+        criticalGaps: [
+          'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+          'JVM-based languages (Java, Kotlin) experience required',
+        ],
+        shortReasoning: 'The backend role has some overlap but several core requirements are missing.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.deepEqual(result.criticalGaps, [
+    '3+ years experience requirement not met',
+    'Distributed systems and data-heavy platform experience missing',
+    'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+    'JVM-based languages (Java, Kotlin) experience required',
+  ]);
+});
+
+test('distributed systems gap wording variants collapse to the canonical critical gap', () => {
+  const resumeText = 'Python REST APIs Docker PostgreSQL.';
+  const jobDescriptionText = `
+    Required Qualifications
+    Backend engineering experience with distributed systems and data-heavy platforms.
+  `;
+  const rawGapVariants = [
+    ['Distributed systems experience missing'],
+    ['Data-heavy platform experience missing'],
+    ['Large-scale backend systems experience missing'],
+    ['High-throughput distributed systems experience missing'],
+    [
+      'Distributed systems experience missing',
+      'Distributed systems and data-heavy platform experience missing',
+    ],
+  ];
+
+  for (const criticalGaps of rawGapVariants) {
+    const result = applyFinalConsistencyRepair(
+      applyAnalysisGuardrails(
+        {
+          fitScore: 7.8,
+          recommendation: APPLY,
+          interviewChance: '5-10%',
+          companyType: 'Direct Employer',
+          opportunityQuality: 'High',
+          applicationRequirements: [],
+          effortLevel: 'Low',
+          strongMatches: ['REST APIs'],
+          criticalGaps,
+          shortReasoning: 'The role has meaningful backend overlap with one platform-scale gap.',
+        },
+        { resumeText, jobDescriptionText },
+      ),
+      { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+    );
+
+    assert.deepEqual(result.criticalGaps, [
+      'Distributed systems and data-heavy platform experience missing',
+    ]);
+  }
+});
+
+test('distributed systems and event-streaming gaps remain separate when both are required', () => {
+  const resumeText = 'Python REST APIs Docker PostgreSQL.';
+  const jobDescriptionText = `
+    Required Qualifications
+    Backend engineering experience with distributed systems and data-heavy platforms.
+    Experience with event streaming systems including Kafka, Kinesis, SQS, or Flink.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.8,
+        recommendation: APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['REST APIs'],
+        criticalGaps: ['Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required'],
+        shortReasoning: 'The role has meaningful backend overlap with required platform-scale gaps.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.ok(result.criticalGaps.includes('Distributed systems and data-heavy platform experience missing'));
+  assert.ok(result.criticalGaps.includes('Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required'));
+});
+
+test('Kafka-only resume evidence does not suppress broader distributed systems gap', () => {
+  const resumeText = 'Python REST APIs Docker PostgreSQL Kafka event-driven architecture.';
+  const jobDescriptionText = `
+    Required Qualifications
+    Backend engineering experience with distributed systems and data-heavy platforms.
+    Experience with event streaming systems including Kafka, Kinesis, SQS, or Flink.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7.8,
+        recommendation: APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['REST APIs'],
+        criticalGaps: ['Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required'],
+        shortReasoning: 'The role has meaningful backend overlap with required platform-scale gaps.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.ok(result.criticalGaps.includes('Distributed systems and data-heavy platform experience missing'));
+});
+
+test('explicit high-throughput distributed systems resume evidence suppresses broader distributed systems gap', () => {
+  const resumeText =
+    '3+ years professional software engineering experience building high-throughput distributed systems and large-scale platform services.';
+  const jobDescriptionText = `
+    Required Qualifications
+    3+ years experience in software engineering.
+    Backend engineering experience with distributed systems and data-heavy platforms.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 8.5,
+        recommendation: STRONG_APPLY,
+        interviewChance: '8-15%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['Distributed systems'],
+        criticalGaps: [],
+        shortReasoning: 'The role aligns with the resume platform-scale backend experience.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.some((gap) => /distributed systems|data-heavy platform/i.test(gap)), false);
+});
+
+test('preferred-only distributed systems mention does not create deterministic critical gap', () => {
+  const resumeText = 'Python REST APIs Docker PostgreSQL.';
+  const jobDescriptionText = `
+    Requirements: Python backend API development.
+    Preferred: experience with distributed systems and data-heavy platforms.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 8.5,
+        recommendation: STRONG_APPLY,
+        interviewChance: '8-15%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['Python', 'REST APIs'],
+        criticalGaps: [],
+        shortReasoning: 'The backend stack is closely aligned.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.some((gap) => /distributed systems|data-heavy platform/i.test(gap)), false);
+});
+
 test('ROI skips Hire Feed without changing deterministic technical evidence', () => {
   const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
   const jobDescriptionText = `
@@ -2746,6 +2949,168 @@ test('known low-ROI source never softens technical Hard Skip', () => {
   assert.equal(roiOn.interviewChance, roiOff.interviewChance);
   assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
   assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+});
+
+const atlassianScoreResumeText =
+  'Internship and academic projects with backend REST APIs, React, TypeScript, JavaScript, SQL, CSS, and HTML.';
+
+const atlassianScoreJobDescriptionText = `
+  Atlassian
+  Software Engineer
+  Required Qualifications:
+  3+ years of professional software engineering experience.
+  Backend engineering experience with distributed systems and data-heavy platforms.
+  Build high-throughput and low-latency distributed workflows.
+  Experience with event streaming systems such as Kafka, Kinesis, SQS, or Flink required.
+  JVM-based languages such as Java or Kotlin required.
+`;
+
+function analyzeAtlassianScoreVariant(fitScore, { optimizeForApplicationRoi = false, strongMatches = ['Backend'] } = {}) {
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches,
+      criticalGaps: [
+        'Distributed systems and data-heavy platform experience missing',
+        'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+        'JVM-based languages (Java, Kotlin) experience required',
+      ],
+      shortReasoning: 'The role has meaningful required gaps.',
+    },
+    {
+      resumeText: atlassianScoreResumeText,
+      jobDescriptionText: atlassianScoreJobDescriptionText,
+    },
+  );
+
+  return applyFinalConsistencyRepair(guarded, {
+    resumeText: atlassianScoreResumeText,
+    jobDescriptionText: atlassianScoreJobDescriptionText,
+    optimizeForApplicationRoi,
+  });
+}
+
+test('Atlassian-like low-score hard gap stabilizes raw 2.8 fit score to 3.0', () => {
+  const result = analyzeAtlassianScoreVariant(2.8);
+
+  assert.equal(result.fitScore, 3.0);
+  assert.deepEqual(result.strongMatches, []);
+  assert.equal(result.recommendation, SKIP);
+  assert.equal(result.interviewChance, '1-3%');
+  assert.deepEqual(result.criticalGaps, [
+    '3+ years experience requirement not met',
+    'Distributed systems and data-heavy platform experience missing',
+    'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+    'JVM-based languages (Java, Kotlin) experience required',
+  ]);
+});
+
+test('Atlassian-like low-score hard gap stabilizes raw 3.8 fit score to 3.0', () => {
+  const result = analyzeAtlassianScoreVariant(3.8, { strongMatches: [] });
+
+  assert.equal(result.fitScore, 3.0);
+  assert.deepEqual(result.strongMatches, []);
+});
+
+test('same final Atlassian-like evidence returns one displayed fit score across raw score variance and ROI mode', () => {
+  const lowRawRoiOff = analyzeAtlassianScoreVariant(2.8, { optimizeForApplicationRoi: false });
+  const highRawRoiOff = analyzeAtlassianScoreVariant(3.8, {
+    optimizeForApplicationRoi: false,
+    strongMatches: [],
+  });
+  const lowRawRoiOn = analyzeAtlassianScoreVariant(2.8, { optimizeForApplicationRoi: true });
+  const highRawRoiOn = analyzeAtlassianScoreVariant(3.8, {
+    optimizeForApplicationRoi: true,
+    strongMatches: [],
+  });
+
+  assert.equal(lowRawRoiOff.fitScore, 3.0);
+  assert.equal(highRawRoiOff.fitScore, 3.0);
+  assert.equal(lowRawRoiOn.fitScore, 3.0);
+  assert.equal(highRawRoiOn.fitScore, 3.0);
+  assert.deepEqual(lowRawRoiOff.strongMatches, []);
+  assert.deepEqual(highRawRoiOff.strongMatches, []);
+  assert.deepEqual(lowRawRoiOn.strongMatches, []);
+  assert.deepEqual(highRawRoiOn.strongMatches, []);
+  assert.deepEqual(lowRawRoiOff.criticalGaps, highRawRoiOff.criticalGaps);
+  assert.deepEqual(lowRawRoiOn.criticalGaps, highRawRoiOn.criticalGaps);
+});
+
+test('low-score weak-match role without hard experience gate is not forced to 3.0', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 3.8,
+      recommendation: SKIP,
+      interviewChance: '1-3%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Backend'],
+      criticalGaps: [
+        'Distributed systems and data-heavy platform experience missing',
+        'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+        'JVM-based languages (Java, Kotlin) experience required',
+      ],
+      shortReasoning: 'The role has meaningful required gaps.',
+    },
+    {
+      resumeText: atlassianScoreResumeText,
+      jobDescriptionText: atlassianScoreJobDescriptionText.replace(
+        '3+ years of professional software engineering experience.',
+        '',
+      ),
+      optimizeForApplicationRoi: false,
+    },
+  );
+
+  assert.equal(result.fitScore, 3.8);
+});
+
+test('hard experience gap with several meaningful strong matches is not automatically forced to 3.0', () => {
+  const resumeText =
+    'Internship and academic projects with backend REST APIs, Python, PostgreSQL, Docker, React, TypeScript, SQL, CSS, and HTML.';
+  const jobDescriptionText = `
+    Product Software Engineer
+    Required Qualifications:
+    3+ years of professional software engineering experience.
+    Build backend REST APIs with Python, PostgreSQL, and Docker.
+    Backend engineering experience with distributed systems and data-heavy platforms.
+    Experience with event streaming systems such as Kafka, Kinesis, SQS, or Flink required.
+    JVM-based languages such as Java or Kotlin required.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 4.8,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['Python', 'PostgreSQL', 'Docker'],
+      criticalGaps: [
+        'Distributed systems and data-heavy platform experience missing',
+        'Experience with event streaming systems (Kafka, Kinesis, SQS, Flink) required',
+        'JVM-based languages (Java, Kotlin) experience required',
+      ],
+      shortReasoning: 'The role has meaningful required gaps.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+  const result = applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+
+  assert.equal(result.fitScore, 4.0);
 });
 
 test('real LinkedIn Jobright.ai snippet triggers known low-ROI source filter', () => {

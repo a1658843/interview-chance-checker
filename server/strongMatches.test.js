@@ -130,6 +130,20 @@ test('canonicalizes REST and authentication variants', () => {
   );
 });
 
+test('filters generic non-canonical strong matches while preserving specific matches', () => {
+  const resumeText = 'Built backend REST APIs with FastAPI, PostgreSQL, Docker, and React.';
+  const jobDescriptionText =
+    'Backend engineering role requiring REST API development, PostgreSQL, Docker, and React.';
+
+  assert.deepEqual(
+    normalizeStrongMatches(['Backend', 'Backend Engineering', 'Full Stack', 'Software Engineering'], {
+      resumeText,
+      jobDescriptionText,
+    }),
+    ['React', 'REST APIs', 'PostgreSQL', 'Docker'],
+  );
+});
+
 test('ranks strong matches by engineering decision priority', () => {
   const resumeText = 'Python React REST APIs PostgreSQL Docker GitHub Actions Cursor GitHub Copilot.';
   const jobDescriptionText = 'Need Python, React, REST APIs, PostgreSQL, Docker, CI/CD, and AI coding tools.';

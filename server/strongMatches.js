@@ -255,6 +255,18 @@ function getConceptForLabel(label) {
   );
 }
 
+function isGenericNonCanonicalStrongMatch(label) {
+  return [
+    'backend',
+    'backend engineering',
+    'backend development',
+    'full stack',
+    'full-stack',
+    'fullstack',
+    'software engineering',
+  ].includes(normalizeAlias(label));
+}
+
 export function isStrongMatchSupportedByResume(label, resumeText) {
   if (typeof label !== 'string' || label.trim().length === 0) {
     return false;
@@ -366,6 +378,11 @@ function canonicalizeStrongMatchLabels(labels, { resumeText, jobDescriptionText 
 
   for (const label of labels) {
     const concept = getConceptForLabel(label);
+
+    if (!concept && isGenericNonCanonicalStrongMatch(label)) {
+      continue;
+    }
+
     const canonicalLabel = concept ? conceptDisplayLabel(concept, jobDescriptionText) : label;
     const conceptKey = (concept?.label ?? canonicalLabel).toLowerCase();
 

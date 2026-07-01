@@ -15,7 +15,8 @@ type TextInputPanelProps = {
   textareaVisible?: boolean;
   textareaActions?: ReactNode;
   centerSummary?: boolean;
-  density?: 'normal' | 'compact';
+  density?: 'normal' | 'compact' | 'working' | 'empty';
+  afterTextarea?: ReactNode;
 };
 
 export function TextInputPanel({
@@ -34,12 +35,17 @@ export function TextInputPanel({
   textareaActions,
   centerSummary = false,
   density = 'normal',
+  afterTextarea,
 }: TextInputPanelProps) {
   const isCompact = density === 'compact';
+  const isWorking = density === 'working';
+  const isEmpty = density === 'empty';
 
   return (
     <article
-      className={`flex flex-col rounded-lg border border-slate-300 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 ${isCompact ? 'min-h-[244px]' : 'min-h-[326px]'}`}
+      className={`flex flex-col rounded-lg border border-slate-300 bg-white p-5 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 ${
+        isCompact ? 'min-h-[244px]' : isWorking ? 'min-h-[280px]' : isEmpty ? 'min-h-[242px]' : 'min-h-[326px]'
+      }`}
     >
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
@@ -65,12 +71,15 @@ export function TextInputPanel({
           {textareaActions ? <div className="mt-3 flex justify-end">{textareaActions}</div> : null}
           <textarea
             id={id}
-            className={`mt-4 flex-1 resize-none rounded-md border border-slate-300 bg-slate-50 p-4 text-sm leading-6 text-slate-900 outline-none transition-colors duration-150 ease-out placeholder:text-slate-500 focus:border-cyan-600 focus:bg-white focus:ring-4 focus:ring-cyan-100 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-cyan-500 dark:focus:bg-zinc-900 dark:focus:ring-cyan-950 ${isCompact ? 'min-h-[144px]' : 'min-h-[226px]'}`}
+            className={`mt-4 flex-1 resize-none rounded-md border border-slate-300 bg-slate-50 p-4 text-sm leading-6 text-slate-900 outline-none transition-colors duration-150 ease-out placeholder:text-slate-500 focus:border-cyan-600 focus:bg-white focus:ring-4 focus:ring-cyan-100 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-cyan-500 dark:focus:bg-zinc-900 dark:focus:ring-cyan-950 ${
+              isCompact ? 'min-h-[144px]' : isWorking ? 'min-h-[180px]' : isEmpty ? 'min-h-[144px]' : 'min-h-[226px]'
+            }`}
             value={value}
             onChange={(event) => onChange(event.target.value)}
             placeholder={placeholder}
             disabled={disabled}
           />
+          {afterTextarea ? <div className="mt-2">{afterTextarea}</div> : null}
         </>
       ) : null}
     </article>

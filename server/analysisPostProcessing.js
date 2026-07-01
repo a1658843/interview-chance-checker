@@ -1881,6 +1881,22 @@ function getStableDisplayedFitScore(analysis) {
   const criticalGaps = getCriticalGapTexts(analysis);
   const strongMatchCount = getStrongMatchCount(analysis);
   const decisionChangingGapCount = criticalGaps.filter(isDecisionChangingRequiredGap).length;
+  const hasUnmetExperienceRequirement = criticalGaps.some((gap) =>
+    /\b\d+\+?\s*years?\b.*\b(experience|requirement)\b.*\bnot met\b/i.test(String(gap ?? '')),
+  );
+
+  if (
+    analysis?.experienceGate === 'Hard Gap' &&
+    hasUnmetExperienceRequirement &&
+    decisionChangingGapCount >= 3 &&
+    strongMatchCount <= 1 &&
+    score >= 2 &&
+    score <= 5 &&
+    analysis?.recommendation === 'Skip ❌' &&
+    analysis?.interviewChance === '1-3%'
+  ) {
+    return 3.0;
+  }
 
   if (decisionChangingGapCount >= 2 && score >= 9) {
     return 8.0;
@@ -1970,6 +1986,7 @@ function getCriticalGapPriority(gap) {
 
 const sassLessCriticalGap = 'SASS or LESS experience not demonstrated';
 const stateManagementCriticalGap = 'State management libraries (Redux, Context API) experience not demonstrated';
+const distributedSystemsCriticalGap = 'Distributed systems and data-heavy platform experience missing';
 
 function isSassLessCriticalGap(gap) {
   const value = String(gap ?? '').toLowerCase();
@@ -1986,6 +2003,21 @@ function isStateManagementCriticalGap(gap) {
   return /\bstate management\b|\bredux\b|\bcontext api\b|\breact context\b/i.test(value);
 }
 
+function isDistributedSystemsCriticalGap(gap) {
+  const value = String(gap ?? '').toLowerCase();
+
+  return (
+    /\bdistributed systems?\b/i.test(value) ||
+    /\bdata[- ]heavy platforms?\b/i.test(value) ||
+    /\blarge[- ]scale backend systems?\b/i.test(value) ||
+    /\bhigh[- ]throughput distributed systems?\b/i.test(value) ||
+    /\bhigh[- ]throughput distributed workflows?\b/i.test(value) ||
+    /\blow[- ]latency distributed workflows?\b/i.test(value) ||
+    /\bresilient distributed pipelines?\b/i.test(value) ||
+    /\bproduction[- ]scale distributed platforms?\b/i.test(value)
+  );
+}
+
 function canonicalizeCriticalGapDisplay(gap) {
   if (isSassLessCriticalGap(gap)) {
     return sassLessCriticalGap;
@@ -1993,6 +2025,10 @@ function canonicalizeCriticalGapDisplay(gap) {
 
   if (isStateManagementCriticalGap(gap)) {
     return stateManagementCriticalGap;
+  }
+
+  if (isDistributedSystemsCriticalGap(gap)) {
+    return distributedSystemsCriticalGap;
   }
 
   return gap;
@@ -2008,6 +2044,10 @@ function getCriticalGapSemanticKey(gap) {
 
   if (canonicalGap === stateManagementCriticalGap) {
     return 'state-management';
+  }
+
+  if (canonicalGap === distributedSystemsCriticalGap) {
+    return 'distributed-systems';
   }
 
   if (/\b(major|severe|moderate)?\s*experience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
@@ -2140,6 +2180,41 @@ const deterministicRequiredSkillGapCatalog = [
       'mobx',
     ],
     resumeSignals: ['redux', 'context api', 'react context', 'zustand', 'mobx', 'state management'],
+  },
+  {
+    canonicalGap: distributedSystemsCriticalGap,
+    jobSignals: [
+      'distributed systems',
+      'data heavy platforms',
+      'data heavy platform',
+      'large scale backend systems',
+      'large scale backend system',
+      'high throughput distributed workflows',
+      'high throughput distributed workflow',
+      'low latency distributed workflows',
+      'low latency distributed workflow',
+      'resilient distributed pipelines',
+      'resilient distributed pipeline',
+      'production scale distributed platform',
+      'production scale distributed platforms',
+    ],
+    resumeSignals: [
+      'distributed systems',
+      'distributed architecture',
+      'large scale backend systems',
+      'large scale backend system',
+      'high throughput systems',
+      'high throughput system',
+      'low latency systems',
+      'low latency system',
+      'large scale platform',
+      'large scale platforms',
+      'resilient distributed workflows',
+      'resilient distributed workflow',
+      'production scale distributed platform',
+      'production scale distributed platforms',
+      'distributed data platform ownership',
+    ],
   },
 ];
 

@@ -317,6 +317,7 @@ function App() {
 
   const displayedResult = getDisplayedResult(result);
   const hasCompletedAnalysisWorkspace = Boolean(displayedResult && !isResumeTextareaVisible);
+  const hasSavedResumeNoResultWorkspace = hasSavedResume && !displayedResult && !isResumeTextareaVisible;
 
   useEffect(() => {
     if (displayedResult) {
@@ -412,7 +413,7 @@ function App() {
     </div>
   ) : undefined;
 
-  function renderJobDescriptionPanel(density: 'normal' | 'compact' = 'normal') {
+  function renderJobDescriptionPanel(density: 'normal' | 'compact' | 'working' | 'empty' = 'normal') {
     return (
       <TextInputPanel
         id="job-description-text"
@@ -422,12 +423,51 @@ function App() {
         value={jobDescriptionText}
         actions={jobDescriptionActions}
         density={density}
+        afterTextarea={
+          density === 'empty' ? (
+            <p className="text-xs leading-5 text-slate-500 dark:text-zinc-400">
+              Paste a LinkedIn job description here, or use the extension.
+            </p>
+          ) : undefined
+        }
         onChange={(value) => {
           setJobDescriptionText(value);
           setInputError(null);
           setAnalysisWarning(null);
         }}
       />
+    );
+  }
+
+  function renderPreAnalysisStatusStrip() {
+    if (!hasSavedResumeNoResultWorkspace || inputError || isAnalyzing) {
+      return null;
+    }
+
+    if (!jobDescriptionText.trim()) {
+      return null;
+    }
+
+    return (
+      <article className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 shadow-sm dark:border-cyan-900 dark:bg-cyan-950/30">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">Ready to analyze</h2>
+            <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+              Generate your application recommendation.
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={handleAnalyze}
+            disabled={!canAnalyze}
+            className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+          >
+            Check Fit
+            <ArrowRight className="h-3.5 w-3.5" />
+          </button>
+        </div>
+      </article>
     );
   }
 
@@ -716,13 +756,20 @@ function App() {
                 }
               />
                 ) : null}
-                {renderJobDescriptionPanel()}
+                {renderJobDescriptionPanel(
+                  hasSavedResumeNoResultWorkspace
+                    ? jobDescriptionText.trim()
+                      ? 'working'
+                      : 'empty'
+                    : 'normal',
+                )}
               </div>
+              {renderPreAnalysisStatusStrip()}
             </>
           )}
         </section>
 
-        {!hasCompletedAnalysisWorkspace ? (
+        {!hasCompletedAnalysisWorkspace && (!hasSavedResumeNoResultWorkspace || inputError || isAnalyzing) ? (
           <ResultsPanel
             result={displayedResult}
             inputError={inputError}
