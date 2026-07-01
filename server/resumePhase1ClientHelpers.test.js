@@ -224,3 +224,121 @@ test('imported resume text can be persisted locally', async () => {
 
   delete global.window;
 });
+
+test('extension handoff accepts valid LinkedIn payloads and formats job descriptions', async () => {
+  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Software Engineer',
+    company: 'Example Co',
+    location: 'Remote',
+    employmentType: 'Full-time',
+    workplaceType: 'Remote',
+    url: 'https://www.linkedin.com/jobs/view/123',
+    description:
+      'Build backend APIs, improve distributed systems, collaborate with product teams, and support production services for customers.',
+  });
+
+  assert.ok(payload);
+  assert.match(formatLinkedInJobDescription(payload), /LinkedIn Job Posting/);
+  assert.match(formatLinkedInJobDescription(payload), /Title: Software Engineer/);
+  assert.match(formatLinkedInJobDescription(payload), /Company: Example Co/);
+  assert.match(formatLinkedInJobDescription(payload), /Job Description:/);
+});
+
+test('extension handoff rejects malformed payloads', async () => {
+  const { parseExtensionHandoffMessage, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+
+  assert.equal(validateLinkedInJobHandoffPayload({ source: 'linkedin' }), null);
+  assert.equal(parseExtensionHandoffMessage({ type: 'WRONG_TYPE', payload: {} }), null);
+});
+
+test('extension handoff rejects empty or too-short descriptions', async () => {
+  const { validateLinkedInJobHandoffPayload } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+
+  assert.equal(
+    validateLinkedInJobHandoffPayload({
+      source: 'linkedin',
+      description: 'Too short.',
+    }),
+    null,
+  );
+});
+
+test('extension handoff can auto-populate an empty job description', async () => {
+  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Frontend Engineer',
+    description:
+      'Create accessible user interfaces, collaborate with design teams, build React components, and improve product workflows.',
+  });
+  let jobDescriptionText = '';
+
+  if (payload && jobDescriptionText.trim().length === 0) {
+    jobDescriptionText = formatLinkedInJobDescription(payload);
+  }
+
+  assert.match(jobDescriptionText, /Frontend Engineer/);
+});
+
+test('extension handoff preserves existing job description until user chooses replace', async () => {
+  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Backend Engineer',
+    description:
+      'Build APIs, own backend services, work with SQL databases, and collaborate with engineering teams on product features.',
+  });
+  let jobDescriptionText = 'Existing pasted JD';
+  let pendingLinkedInJob = null;
+
+  if (payload && jobDescriptionText.trim().length > 0) {
+    pendingLinkedInJob = formatLinkedInJobDescription(payload);
+  }
+
+  assert.equal(jobDescriptionText, 'Existing pasted JD');
+  assert.match(pendingLinkedInJob, /Backend Engineer/);
+});
+
+test('extension handoff removes only the consumed handoff id from app URL', async () => {
+  const { getExtensionHandoffIdFromUrl, removeExtensionHandoffIdFromUrl } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const url = 'http://localhost:5173/?handoffId=abc123&theme=dark#results';
+
+  assert.equal(getExtensionHandoffIdFromUrl(url), 'abc123');
+  assert.equal(removeExtensionHandoffIdFromUrl(url), '/?theme=dark#results');
+});
+
+test('extension handoff helpers do not modify saved resume storage', async () => {
+  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const { readSavedResumeText, resumeStorageKey } = await importTypeScriptModule('../src/lib/resumeStorage.ts');
+  global.window = {
+    localStorage: createMemoryLocalStorage([[resumeStorageKey, 'Saved resume']]),
+  };
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Software Engineer',
+    description:
+      'Build software, collaborate with cross-functional partners, improve systems, and support reliable production workflows.',
+  });
+
+  if (payload) {
+    formatLinkedInJobDescription(payload);
+  }
+
+  assert.equal(readSavedResumeText(), 'Saved resume');
+
+  delete global.window;
+});

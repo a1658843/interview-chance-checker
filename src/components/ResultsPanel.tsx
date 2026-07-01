@@ -1,4 +1,6 @@
-import { CheckCircle2, CircleAlert, Loader2, type LucideIcon, Sparkles, TriangleAlert } from 'lucide-react';
+import { CheckCircle2, ChevronDown, CircleAlert, Loader2, type LucideIcon, Sparkles, TriangleAlert } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import type { AnalysisResult } from '../types/analysis';
 import { ScoreCard } from './ScoreCard';
 
@@ -8,6 +10,7 @@ type ResultsPanelProps = {
   analysisWarning?: string | null;
   isAnalyzing?: boolean;
   resultVersion?: number;
+  scoreContextActions?: ReactNode;
 };
 
 type ListSectionProps = {
@@ -81,6 +84,88 @@ function getDisplayedApplicationRequirements(requirements: string[]) {
   return priority.filter((requirement) => requirementSet.has(requirement)).slice(0, 3);
 }
 
+function shouldExpandMatchDetails(recommendation: string) {
+  return recommendation.startsWith('Strong Apply') || recommendation.startsWith('Apply');
+}
+
+function getMatchDetailsSummary(result: AnalysisResult) {
+  const parts = [];
+  const strengthCount = result.strongMatches.length;
+  const gapCount = result.criticalGaps.length;
+
+  if (strengthCount > 0) {
+    parts.push(`${strengthCount} ${strengthCount === 1 ? 'strength' : 'strengths'}`);
+  }
+
+  if (gapCount > 0) {
+    parts.push(`${gapCount} critical ${gapCount === 1 ? 'gap' : 'gaps'}`);
+  }
+
+  return parts.length > 0 ? `Match Details · ${parts.join(' · ')}` : 'Match Details';
+}
+
+function MatchDetails({ result, resultVersion }: { result: AnalysisResult; resultVersion: number }) {
+  const [isExpanded, setIsExpanded] = useState(() => shouldExpandMatchDetails(result.recommendation));
+  const strongMatchLabels = result.strongMatches.slice(0, 5).map((match) => match.label);
+  const hasStrongMatches = strongMatchLabels.length > 0;
+  const hasCriticalGaps = result.criticalGaps.length > 0;
+  const hasDetails = hasStrongMatches || hasCriticalGaps;
+  const contentId = `match-details-${resultVersion}`;
+
+  useEffect(() => {
+    setIsExpanded(shouldExpandMatchDetails(result.recommendation));
+  }, [result.recommendation, resultVersion]);
+
+  return (
+    <article className="rounded-lg border border-slate-300 bg-white shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+      <button
+        type="button"
+        className="flex w-full items-center justify-between gap-4 rounded-lg px-5 py-4 text-left transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-cyan-500 focus:ring-offset-2 focus:ring-offset-white disabled:cursor-default disabled:hover:bg-transparent dark:hover:bg-zinc-700/40 dark:focus:ring-cyan-400 dark:focus:ring-offset-zinc-800 dark:disabled:hover:bg-transparent"
+        aria-expanded={isExpanded}
+        aria-controls={contentId}
+        disabled={!hasDetails}
+        onClick={() => setIsExpanded((current) => !current)}
+      >
+        <span className="text-sm font-semibold text-slate-800 dark:text-zinc-100">{getMatchDetailsSummary(result)}</span>
+        {hasDetails ? (
+          <ChevronDown
+            className={`h-5 w-5 shrink-0 text-slate-500 transition-transform dark:text-zinc-400 ${
+              isExpanded ? 'rotate-180' : ''
+            }`}
+            aria-hidden="true"
+          />
+        ) : null}
+      </button>
+
+      {hasDetails && isExpanded ? (
+        <div id={contentId} className="border-t border-slate-200 px-5 py-4 dark:border-zinc-700">
+          <div className={`grid gap-4 ${hasStrongMatches && hasCriticalGaps ? 'lg:grid-cols-2' : 'grid-cols-1'}`}>
+            {hasStrongMatches ? (
+              <section>
+                <div className="flex items-center gap-2">
+                  <CheckCircle2 className="h-5 w-5 text-cyan-700 dark:text-cyan-400" />
+                  <h3 className="text-base font-semibold text-slate-950 dark:text-zinc-50">Strong Matches</h3>
+                </div>
+                <TagChips items={strongMatchLabels} />
+              </section>
+            ) : null}
+
+            {hasCriticalGaps ? (
+              <section>
+                <div className="flex items-center gap-2">
+                  <TriangleAlert className="h-5 w-5 text-rose-700 dark:text-rose-400" />
+                  <h3 className="text-base font-semibold text-slate-950 dark:text-zinc-50">Critical Gaps</h3>
+                </div>
+                <TagChips items={result.criticalGaps} />
+              </section>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
 function LoadingIndicator() {
   return (
     <article className="rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
@@ -98,6 +183,7 @@ export function ResultsPanel({
   analysisWarning,
   isAnalyzing = false,
   resultVersion = 0,
+  scoreContextActions,
 }: ResultsPanelProps) {
   if (isAnalyzing) {
     return <LoadingIndicator />;
@@ -142,23 +228,12 @@ export function ResultsPanel({
         icon={CircleAlert}
         items={displayedApplicationRequirements}
       />
-      <ScoreCard result={result} />
+      <ScoreCard result={result} contextActions={scoreContextActions} />
       <article className="rounded-lg border border-slate-300 bg-white px-5 py-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
         <h3 className="text-base font-semibold text-slate-950 dark:text-zinc-50">Short Reasoning</h3>
         <p className="mt-2 text-sm leading-6 text-slate-700 dark:text-zinc-300">{result.reasoning}</p>
       </article>
-      <div className="grid gap-4 lg:grid-cols-2">
-        {result.strongMatches.length > 0 ? (
-          <article className="rounded-lg border border-slate-300 bg-white p-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
-            <div className="flex items-center gap-2">
-              <CheckCircle2 className="h-5 w-5 text-cyan-700 dark:text-cyan-400" />
-              <h3 className="text-base font-semibold text-slate-950 dark:text-zinc-50">Strong Matches</h3>
-            </div>
-            <TagChips items={result.strongMatches.slice(0, 5).map((match) => match.label)} />
-          </article>
-        ) : null}
-        <ListSection title="Critical Gaps" icon={TriangleAlert} items={result.criticalGaps} variant="chips" />
-      </div>
+      <MatchDetails result={result} resultVersion={resultVersion} />
     </section>
   );
 }

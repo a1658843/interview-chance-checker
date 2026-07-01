@@ -18,6 +18,12 @@ import { analyzeMatch } from './lib/analyzeMatch';
 import { analyzeWithApi } from './lib/apiAnalysis';
 import { extractApplicationRequirements, getEffortLevel } from './lib/applicationRequirements';
 import { extractEmploymentType } from './lib/employmentType';
+import {
+  formatLinkedInJobDescription,
+  getExtensionHandoffIdFromUrl,
+  parseExtensionHandoffMessage,
+  removeExtensionHandoffIdFromUrl,
+} from './lib/extensionJobHandoff';
 import { readResumeFile, ResumeImportError } from './lib/resumeImport';
 import { clearSavedResumeText, readSavedResumeText, saveResumeTextLocally } from './lib/resumeStorage';
 import { validateAnalysisInputs } from './lib/validation';
@@ -61,12 +67,18 @@ function App() {
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
+  const [pendingLinkedInJob, setPendingLinkedInJob] = useState<{
+    title?: string;
+    company?: string;
+    formattedJobDescription: string;
+  } | null>(null);
   const [resumeImportError, setResumeImportError] = useState<string | null>(null);
   const [isImportingResume, setIsImportingResume] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [resultVersion, setResultVersion] = useState(0);
   const [optimizeForApplicationRoi, setOptimizeForApplicationRoi] = useState(true);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
+  const [isJobContextExpanded, setIsJobContextExpanded] = useState(false);
 
   const hasSavedResume = resumeText.trim().length > 0;
   const canAnalyze = hasSavedResume && jobDescriptionText.trim().length > 0 && !isAnalyzing;
@@ -87,6 +99,14 @@ function App() {
     saveResumeTextLocally(resumeText);
   }, [resumeText]);
 
+  function clearExtensionHandoffUrl() {
+    if (typeof window === 'undefined' || !getExtensionHandoffIdFromUrl(window.location.href)) {
+      return;
+    }
+
+    window.history.replaceState(null, '', removeExtensionHandoffIdFromUrl(window.location.href));
+  }
+
   function setExplicitTheme(nextTheme: Theme) {
     try {
       window.localStorage.setItem(themeStorageKey, nextTheme);
@@ -104,6 +124,41 @@ function App() {
       console.log('FINAL_RESULT_JSON', JSON.stringify(result));
     }
   }, [result]);
+
+  useEffect(() => {
+    function handleExtensionHandoff(event: MessageEvent) {
+      if (event.source !== window) {
+        return;
+      }
+
+      const handoffMessage = parseExtensionHandoffMessage(event.data);
+
+      if (!handoffMessage) {
+        return;
+      }
+
+      const formattedJobDescription = formatLinkedInJobDescription(handoffMessage.payload);
+
+      setInputError(null);
+      setAnalysisWarning(null);
+
+      if (jobDescriptionText.trim().length === 0) {
+        setJobDescriptionText(formattedJobDescription);
+        setPendingLinkedInJob(null);
+        clearExtensionHandoffUrl();
+        return;
+      }
+
+      setPendingLinkedInJob({
+        title: handoffMessage.payload.title,
+        company: handoffMessage.payload.company,
+        formattedJobDescription,
+      });
+    }
+
+    window.addEventListener('message', handleExtensionHandoff);
+    return () => window.removeEventListener('message', handleExtensionHandoff);
+  }, [jobDescriptionText]);
 
   function ensureDecisionSignals(analysis: AnalysisResult) {
     const applicationRequirements = Array.from(
@@ -243,6 +298,192 @@ function App() {
     setResumeImportError(null);
   }
 
+  function handleReplaceJobDescriptionFromLinkedIn() {
+    if (!pendingLinkedInJob) {
+      return;
+    }
+
+    setJobDescriptionText(pendingLinkedInJob.formattedJobDescription);
+    setPendingLinkedInJob(null);
+    setInputError(null);
+    setAnalysisWarning(null);
+    clearExtensionHandoffUrl();
+  }
+
+  function handleKeepCurrentJobDescription() {
+    setPendingLinkedInJob(null);
+    clearExtensionHandoffUrl();
+  }
+
+  const displayedResult = getDisplayedResult(result);
+  const hasCompletedAnalysisWorkspace = Boolean(displayedResult && !isResumeTextareaVisible);
+
+  useEffect(() => {
+    if (displayedResult) {
+      setIsJobContextExpanded(false);
+    }
+  }, [resultVersion]);
+
+  function getLinkedInJobMetadata() {
+    const metadata = {
+      title: '',
+      company: '',
+      location: '',
+      workplaceType: '',
+      source: '',
+    };
+
+    for (const line of jobDescriptionText.split(/\r?\n/)) {
+      const [rawLabel, ...rawValueParts] = line.split(':');
+      const label = rawLabel.trim().toLowerCase();
+      const value = rawValueParts.join(':').trim();
+
+      if (!value) {
+        continue;
+      }
+
+      if (label === 'title') metadata.title = value;
+      if (label === 'company') metadata.company = value;
+      if (label === 'location') metadata.location = value;
+      if (label === 'workplace type') metadata.workplaceType = value;
+      if (label === 'source') metadata.source = value;
+    }
+
+    return metadata;
+  }
+
+  function getJobContextSummary() {
+    const metadata = getLinkedInJobMetadata();
+    const locationContext = metadata.workplaceType || metadata.location;
+    const parts = [metadata.company, metadata.title, locationContext, metadata.source].filter(Boolean);
+
+    return parts.length > 0 ? parts.join(' · ') : '';
+  }
+
+  function expandJobContextForEdit() {
+    setIsJobContextExpanded(true);
+    window.setTimeout(() => {
+      document.getElementById('job-description-context-text')?.focus();
+    }, 0);
+  }
+
+  const jobDescriptionActions = isInputRowCompact ? (
+    <div className="flex max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold">
+      <span className="inline-flex min-w-0 items-center gap-1.5 text-slate-600 dark:text-zinc-300">
+        <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-700 dark:text-cyan-300" aria-hidden="true" />
+        <span className="min-w-0 truncate">
+          <span className="text-slate-500 dark:text-zinc-400">Using </span>
+          {connectedResumeLabel}
+        </span>
+      </span>
+      <button
+        type="button"
+        onClick={() => fileInputRef.current?.click()}
+        disabled={isImportingResume}
+        className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
+      >
+        {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+        {isImportingResume ? 'Importing...' : 'Replace'}
+      </button>
+      <button
+        type="button"
+        onClick={() => setIsResumeTextareaVisible(true)}
+        className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
+      >
+        <Pencil className="h-3.5 w-3.5" />
+        Edit text
+      </button>
+      <button
+        type="button"
+        onClick={handleClearSavedResume}
+        disabled={isImportingResume}
+        aria-label="Clear saved resume"
+        title="Clear saved resume"
+        className="inline-flex items-center gap-1.5 rounded-sm text-slate-500 transition-colors duration-150 ease-out hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-400 dark:hover:text-rose-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
+      >
+        <Trash2 className="h-3.5 w-3.5" />
+        Clear
+      </button>
+      {resumeImportError ? (
+        <span className="basis-full text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
+          {resumeImportError}
+        </span>
+      ) : null}
+    </div>
+  ) : undefined;
+
+  function renderJobDescriptionPanel(density: 'normal' | 'compact' = 'normal') {
+    return (
+      <TextInputPanel
+        id="job-description-text"
+        label="Job Description"
+        helper="Paste the exact job description for the target role."
+        placeholder="Paste job description here..."
+        value={jobDescriptionText}
+        actions={jobDescriptionActions}
+        density={density}
+        onChange={(value) => {
+          setJobDescriptionText(value);
+          setInputError(null);
+          setAnalysisWarning(null);
+        }}
+      />
+    );
+  }
+
+  const completedJobContextActions = hasCompletedAnalysisWorkspace ? (
+    <div className="flex min-w-0 flex-wrap items-center justify-start gap-x-3 gap-y-1 lg:justify-end">
+      {getJobContextSummary() ? (
+        <span className="min-w-0 truncate text-sm text-slate-500 dark:text-zinc-400">{getJobContextSummary()}</span>
+      ) : null}
+      <button
+        type="button"
+        onClick={() => setIsJobContextExpanded((current) => !current)}
+        aria-expanded={isJobContextExpanded}
+        aria-controls="job-description-context-editor"
+        className="inline-flex items-center rounded-sm text-xs font-semibold text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
+      >
+        {isJobContextExpanded ? 'Hide JD' : 'View JD'}
+      </button>
+      <button
+        type="button"
+        onClick={expandJobContextForEdit}
+        aria-expanded={isJobContextExpanded}
+        aria-controls="job-description-context-editor"
+        className="inline-flex items-center rounded-sm text-xs font-semibold text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
+      >
+        Edit
+      </button>
+    </div>
+  ) : undefined;
+
+  function renderExpandedJobDescriptionContext() {
+    if (!isJobContextExpanded) {
+      return null;
+    }
+
+    return (
+      <article
+        id="job-description-context-editor"
+        className="rounded-lg border border-slate-300 bg-white px-5 py-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
+      >
+        {jobDescriptionActions ? <div className="mb-3 flex justify-end">{jobDescriptionActions}</div> : null}
+        <textarea
+          aria-label="Job description"
+          id="job-description-context-text"
+          className="min-h-[226px] w-full resize-y rounded-md border border-slate-300 bg-slate-50 p-4 text-sm leading-6 text-slate-900 outline-none transition-colors duration-150 ease-out placeholder:text-slate-500 focus:border-cyan-600 focus:bg-white focus:ring-4 focus:ring-cyan-100 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-cyan-500 dark:focus:bg-zinc-900 dark:focus:ring-cyan-950"
+          value={jobDescriptionText}
+          onChange={(event) => {
+            setJobDescriptionText(event.target.value);
+            setInputError(null);
+            setAnalysisWarning(null);
+          }}
+          placeholder="Paste job description here..."
+        />
+      </article>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-[#f3f4f6] transition-colors duration-150 ease-out motion-reduce:transition-none dark:bg-zinc-900">
       <div className="mx-auto flex w-full max-w-7xl flex-col gap-7 px-4 py-6 sm:px-6 lg:px-8">
@@ -324,6 +565,38 @@ function App() {
         </header>
 
         <section className="space-y-4">
+          {pendingLinkedInJob ? (
+            <article className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 shadow-sm dark:border-cyan-900 dark:bg-cyan-950/40">
+              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                <div>
+                  <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">
+                    LinkedIn job ready to import
+                  </h2>
+                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+                    Replace the current job description with
+                    {pendingLinkedInJob.title ? ` ${pendingLinkedInJob.title}` : ' the LinkedIn job'}
+                    {pendingLinkedInJob.company ? ` at ${pendingLinkedInJob.company}` : ''}?
+                  </p>
+                </div>
+                <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={handleReplaceJobDescriptionFromLinkedIn}
+                    className="inline-flex h-9 items-center justify-center rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900"
+                  >
+                    Replace current job description
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleKeepCurrentJobDescription}
+                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
+                  >
+                    Keep current text
+                  </button>
+                </div>
+              </div>
+            </article>
+          ) : null}
           <input
             ref={fileInputRef}
             type="file"
@@ -332,51 +605,65 @@ function App() {
             aria-label="Import resume file"
             onChange={(event) => handleResumeFileSelected(event.target.files?.[0])}
           />
-          {isResumeSetupCompact ? (
-            <article className="rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">Add your resume</h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
-                    Upload a PDF, DOCX, or TXT file, or paste resume text.
-                  </p>
-                  <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-zinc-400">
-                    Saved locally in this browser
-                  </p>
-                  {resumeImportError ? (
-                    <p className="mt-1 text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
-                      {resumeImportError}
-                    </p>
-                  ) : null}
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={() => fileInputRef.current?.click()}
-                    disabled={isImportingResume}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
-                  >
-                    {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                    {isImportingResume ? 'Importing...' : 'Import resume'}
-                  </button>
-                  <button
-                    type="button"
-                    onClick={() => {
-                      setResumeImportError(null);
-                      setIsResumeTextareaVisible(true);
-                    }}
-                    className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
-                  >
-                    <Pencil className="h-3.5 w-3.5" />
-                    Paste resume text
-                  </button>
-                </div>
-              </div>
-            </article>
-          ) : null}
-          <div className={isInputRowCompact || isResumeSetupCompact ? '' : 'grid gap-4 lg:grid-cols-2'}>
-            {!isInputRowCompact && !isResumeSetupCompact ? (
-              <TextInputPanel
+          {hasCompletedAnalysisWorkspace ? (
+            <>
+              <ResultsPanel
+                result={displayedResult}
+                inputError={inputError}
+                analysisWarning={analysisWarning}
+                isAnalyzing={isAnalyzing}
+                resultVersion={resultVersion}
+                scoreContextActions={completedJobContextActions}
+              />
+              {renderExpandedJobDescriptionContext()}
+            </>
+          ) : (
+            <>
+              {isResumeSetupCompact ? (
+                <article className="rounded-lg border border-slate-300 bg-white px-4 py-3 shadow-sm dark:border-zinc-700 dark:bg-zinc-800">
+                  <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+                    <div>
+                      <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">Add your resume</h2>
+                      <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
+                        Upload a PDF, DOCX, or TXT file, or paste resume text.
+                      </p>
+                      <p className="mt-1 text-xs leading-5 text-slate-500 dark:text-zinc-400">
+                        Saved locally in this browser
+                      </p>
+                      {resumeImportError ? (
+                        <p className="mt-1 text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
+                          {resumeImportError}
+                        </p>
+                      ) : null}
+                    </div>
+                    <div className="flex shrink-0 flex-wrap items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={isImportingResume}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:bg-slate-300 disabled:text-slate-500 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900 dark:disabled:bg-zinc-700 dark:disabled:text-zinc-400"
+                      >
+                        {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
+                        {isImportingResume ? 'Importing...' : 'Import resume'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setResumeImportError(null);
+                          setIsResumeTextareaVisible(true);
+                        }}
+                        className="inline-flex h-9 items-center justify-center gap-2 rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
+                      >
+                        <Pencil className="h-3.5 w-3.5" />
+                        Paste resume text
+                      </button>
+                    </div>
+                  </div>
+                </article>
+              ) : null}
+              <div className={isInputRowCompact || isResumeSetupCompact ? '' : 'grid gap-4 lg:grid-cols-2'}>
+                {!isInputRowCompact && !isResumeSetupCompact ? (
+                  <TextInputPanel
                 id="resume-text"
                 label="Resume Text"
                 helper="Paste resume text or import a PDF, DOCX, or TXT file."
@@ -428,75 +715,22 @@ function App() {
                   </>
                 }
               />
-            ) : null}
-            <TextInputPanel
-              id="job-description-text"
-              label="Job Description"
-              helper="Paste the exact job description for the target role."
-              placeholder="Paste job description here..."
-              value={jobDescriptionText}
-              actions={
-                isInputRowCompact ? (
-                  <div className="flex max-w-full flex-wrap items-center gap-x-3 gap-y-1 text-xs font-semibold">
-                    <span className="inline-flex min-w-0 items-center gap-1.5 text-slate-600 dark:text-zinc-300">
-                      <CheckCircle2 className="h-3.5 w-3.5 shrink-0 text-cyan-700 dark:text-cyan-300" aria-hidden="true" />
-                      <span className="min-w-0 truncate">
-                        <span className="text-slate-500 dark:text-zinc-400">Using </span>
-                        {connectedResumeLabel}
-                      </span>
-                    </span>
-                    <button
-                      type="button"
-                      onClick={() => fileInputRef.current?.click()}
-                      disabled={isImportingResume}
-                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
-                    >
-                      {isImportingResume ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Upload className="h-3.5 w-3.5" />}
-                      {isImportingResume ? 'Importing...' : 'Replace'}
-                    </button>
-                    <button
-                      type="button"
-                      onClick={() => setIsResumeTextareaVisible(true)}
-                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-600 transition-colors duration-150 ease-out hover:text-cyan-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:text-zinc-300 dark:hover:text-cyan-300 dark:focus-visible:ring-cyan-900"
-                    >
-                      <Pencil className="h-3.5 w-3.5" />
-                      Edit text
-                    </button>
-                    <button
-                      type="button"
-                      onClick={handleClearSavedResume}
-                      disabled={isImportingResume}
-                      aria-label="Clear saved resume"
-                      title="Clear saved resume"
-                      className="inline-flex items-center gap-1.5 rounded-sm text-slate-500 transition-colors duration-150 ease-out hover:text-rose-700 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 disabled:cursor-not-allowed disabled:text-slate-300 motion-reduce:transition-none dark:text-zinc-400 dark:hover:text-rose-300 dark:focus-visible:ring-cyan-900 dark:disabled:text-zinc-600"
-                    >
-                      <Trash2 className="h-3.5 w-3.5" />
-                      Clear
-                    </button>
-                    {resumeImportError ? (
-                      <span className="basis-full text-xs font-medium leading-5 text-rose-700 dark:text-rose-300">
-                        {resumeImportError}
-                      </span>
-                    ) : null}
-                  </div>
-                ) : undefined
-              }
-              onChange={(value) => {
-                setJobDescriptionText(value);
-                setInputError(null);
-                setAnalysisWarning(null);
-              }}
-            />
-          </div>
+                ) : null}
+                {renderJobDescriptionPanel()}
+              </div>
+            </>
+          )}
         </section>
 
-        <ResultsPanel
-          result={getDisplayedResult(result)}
-          inputError={inputError}
-          analysisWarning={analysisWarning}
-          isAnalyzing={isAnalyzing}
-          resultVersion={resultVersion}
-        />
+        {!hasCompletedAnalysisWorkspace ? (
+          <ResultsPanel
+            result={displayedResult}
+            inputError={inputError}
+            analysisWarning={analysisWarning}
+            isAnalyzing={isAnalyzing}
+            resultVersion={resultVersion}
+          />
+        ) : null}
       </div>
     </main>
   );

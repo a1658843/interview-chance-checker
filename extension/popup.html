@@ -1,0 +1,133 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Interview Chance Checker</title>
+    <style>
+      :root {
+        color: #0f172a;
+        background: #f8fafc;
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      body {
+        width: 340px;
+        margin: 0;
+      }
+
+      main {
+        padding: 14px;
+      }
+
+      h1 {
+        margin: 0;
+        font-size: 15px;
+        line-height: 22px;
+      }
+
+      p {
+        margin: 0;
+      }
+
+      .header {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-bottom: 12px;
+      }
+
+      .mark {
+        display: inline-flex;
+        width: 28px;
+        height: 28px;
+        align-items: center;
+        justify-content: center;
+        border-radius: 8px;
+        background: #0e7490;
+        color: white;
+        font-size: 14px;
+        font-weight: 700;
+      }
+
+      .panel {
+        border: 1px solid #cbd5e1;
+        border-radius: 10px;
+        background: white;
+        padding: 12px;
+      }
+
+      .status {
+        color: #64748b;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .title {
+        margin-top: 8px;
+        font-size: 14px;
+        font-weight: 700;
+        line-height: 20px;
+      }
+
+      .meta {
+        margin-top: 3px;
+        color: #475569;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      .error {
+        color: #be123c;
+      }
+
+      .warning {
+        margin-top: 8px;
+        color: #92400e;
+        font-size: 12px;
+        line-height: 18px;
+      }
+
+      button {
+        width: 100%;
+        height: 38px;
+        margin-top: 12px;
+        border: 0;
+        border-radius: 8px;
+        background: #0e7490;
+        color: white;
+        cursor: pointer;
+        font: inherit;
+        font-size: 13px;
+        font-weight: 700;
+      }
+
+      button:hover {
+        background: #155e75;
+      }
+
+      button:disabled {
+        background: #cbd5e1;
+        color: #64748b;
+        cursor: not-allowed;
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div class="header">
+        <span class="mark">IC</span>
+        <h1>Interview Chance Checker</h1>
+      </div>
+      <section class="panel" aria-live="polite">
+        <p id="status" class="status">Reading the current tab...</p>
+        <p id="title" class="title" hidden></p>
+        <p id="meta" class="meta" hidden></p>
+        <p id="warning" class="warning" hidden></p>
+        <button id="analyzeButton" type="button" disabled>Analyze this job</button>
+      </section>
+    </main>
+  <script src="config.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

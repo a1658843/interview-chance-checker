@@ -1,8 +1,10 @@
 import { CircleCheck, CircleX, Info } from 'lucide-react';
+import type { ReactNode } from 'react';
 import type { AnalysisResult } from '../types/analysis';
 
 type ScoreCardProps = {
   result: AnalysisResult;
+  contextActions?: ReactNode;
 };
 
 type InfoTooltipProps = {
@@ -100,7 +102,7 @@ function RecommendationDisplay({ recommendation }: { recommendation: AnalysisRes
   );
 }
 
-export function ScoreCard({ result }: ScoreCardProps) {
+export function ScoreCard({ result, contextActions }: ScoreCardProps) {
   const primaryCards = [
     {
       label: 'Recommendation',
@@ -153,23 +155,26 @@ export function ScoreCard({ result }: ScoreCardProps) {
           </article>
         ))}
       </div>
-      <div className="flex flex-wrap items-center gap-x-5 gap-y-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300">
-        {result.employmentType ? (
+      <div className="flex flex-col gap-3 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm text-slate-600 shadow-sm dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-300 lg:flex-row lg:items-center lg:justify-between">
+        <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+          {result.employmentType ? (
+            <div className="flex items-center gap-2">
+              <span className="font-semibold text-slate-700 dark:text-zinc-200">Employment Type</span>
+              <MetadataBadge>{result.employmentType}</MetadataBadge>
+            </div>
+          ) : null}
           <div className="flex items-center gap-2">
-            <span className="font-semibold text-slate-700 dark:text-zinc-200">Employment Type</span>
-            <MetadataBadge>{result.employmentType}</MetadataBadge>
+            <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-zinc-200">
+              Employer Type
+              <InfoTooltip
+                label="Employer Type information"
+                text="Identifies whether the posting comes from a direct employer, staffing agency, recruiting firm, talent marketplace, or similar hiring channel. This can affect expected interview conversion."
+              />
+            </span>
+            <MetadataBadge warning={result.companyType === 'Suspicious Posting'}>{result.companyType}</MetadataBadge>
           </div>
-        ) : null}
-        <div className="flex items-center gap-2">
-          <span className="inline-flex items-center gap-1.5 font-semibold text-slate-700 dark:text-zinc-200">
-            Employer Type
-            <InfoTooltip
-              label="Employer Type information"
-              text="Identifies whether the posting comes from a direct employer, staffing agency, recruiting firm, talent marketplace, or similar hiring channel. This can affect expected interview conversion."
-            />
-          </span>
-          <MetadataBadge warning={result.companyType === 'Suspicious Posting'}>{result.companyType}</MetadataBadge>
         </div>
+        {contextActions ? <div className="min-w-0 lg:max-w-[55%]">{contextActions}</div> : null}
       </div>
     </section>
   );

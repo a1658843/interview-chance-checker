@@ -321,6 +321,42 @@ function isProjectTaskPlatform(jobDescriptionText) {
   return signals.filter((signal) => signal.test(text)).length >= 2;
 }
 
+function extractLinkedInCompanyMetadata(jobDescriptionText) {
+  const companyMatch = String(jobDescriptionText ?? '').match(/^\s*Company\s*:\s*(.+)$/im);
+  return companyMatch ? cleanPostingSource(companyMatch[1]) : '';
+}
+
+function isKnownStaffingSourceName(value) {
+  return /\b(robert half|motion recruitment|dice|crossing hurdles|quik hire staffing|hire feed|akkodis|teksystems|randstad|insight global|kforce|experis|collabera|judge group|net2source|talentburst|apex systems)\b/i.test(
+    String(value ?? ''),
+  );
+}
+
+function hasStrongStaffingSignal(jobDescriptionText) {
+  const text = String(jobDescriptionText ?? '');
+
+  return (
+    /\b(crossing hurdles|dice[- ]style recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client|one of our clients|work for one of our clients|unknown end client|end client)\b/i.test(
+      text,
+    ) ||
+    /\brecruiter posting\b[\s\S]{0,120}\bclient\b/i.test(text) ||
+    /\brecruiter\b[\s\S]{0,120}\bposting for a client\b/i.test(text) ||
+    isKnownStaffingSourceName(extractLinkedInCompanyMetadata(text))
+  );
+}
+
+function hasDirectEmployerLinkedInMetadata(jobDescriptionText) {
+  const text = String(jobDescriptionText ?? '');
+  const company = extractLinkedInCompanyMetadata(text);
+
+  return (
+    company.length > 0 &&
+    /^\s*LinkedIn Job Posting\b/im.test(text) &&
+    !isKnownLowRoiSource(company) &&
+    !isKnownStaffingSourceName(company)
+  );
+}
+
 function classifyEmployerType(jobDescriptionText) {
   const text = String(jobDescriptionText ?? '');
 
@@ -332,11 +368,7 @@ function classifyEmployerType(jobDescriptionText) {
     return 'Suspicious Posting';
   }
 
-  if (
-    /\b(crossing hurdles|dice|recruiter|recruiting firm|recruiting agency|staffing agency|staffing partner|staffing firm|contract placement|placement firm|posting for a client|client is seeking|our client|one of our clients|work for one of our clients|unknown end client|end client)\b/i.test(
-      text,
-    )
-  ) {
+  if (hasStrongStaffingSignal(text)) {
     return 'Staffing Agency';
   }
 
@@ -347,6 +379,10 @@ function classifyEmployerType(jobDescriptionText) {
     || isProjectTaskPlatform(text)
   ) {
     return 'Talent Network';
+  }
+
+  if (hasDirectEmployerLinkedInMetadata(text)) {
+    return 'Direct Employer';
   }
 
   return null;

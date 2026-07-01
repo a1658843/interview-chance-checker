@@ -349,6 +349,146 @@ test('direct employer keeps interview chance unchanged', () => {
   assert.equal(result.interviewChance, '8-15%');
 });
 
+test('Atlassian LinkedIn handoff is classified as a direct employer despite generic recruiter wording', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Staffing Agency',
+      opportunityQuality: 'Low',
+      interviewChance: '8-15%',
+    },
+    `
+      LinkedIn Job Posting
+
+      Title: Software Engineer
+      Company: Atlassian
+      Location: United States
+      Employment Type: Full-time
+      Workplace Type: Remote
+      Source: LinkedIn
+      URL: https://www.linkedin.com/jobs/view/123
+
+      Job Description:
+      Atlassian is looking for a Software Engineer to join our product engineering team.
+      You will build customer-facing software, own backend services, and collaborate with platform teams.
+      A recruiter may contact qualified applicants during the interview process.
+      Promoted by hirer. Responses managed off LinkedIn.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Direct Employer');
+  assert.equal(result.opportunityQuality, 'High');
+  assert.equal(result.interviewChance, '8-15%');
+});
+
+test('Hire Feed LinkedIn handoff remains staffing-classified while ROI source filtering is independent', () => {
+  const jobDescriptionText = `
+    LinkedIn Job Posting
+
+    Title: UI Engineer
+    Company: Hire Feed
+    Location: United States
+    Employment Type: Full-time
+    Workplace Type: Remote
+    Source: LinkedIn
+    URL: https://www.linkedin.com/jobs/view/456
+
+    Job Description:
+    Build React and TypeScript user interfaces for client-facing applications.
+    Responsibilities include frontend implementation, REST API integration, and testing.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 8,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['React', 'TypeScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is strong.',
+    },
+    { resumeText: 'React TypeScript REST APIs', jobDescriptionText },
+  );
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText: 'React TypeScript REST APIs',
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(guarded.companyType, 'Staffing Agency');
+  assert.equal(roiOn.postingSource, 'Hire Feed');
+  assert.equal(isKnownLowRoiSource(roiOn.postingSource), true);
+  assert.equal(roiOn.recommendation, SKIP);
+});
+
+test('genuine staffing-agency posting still classifies as staffing agency', () => {
+  const result = applyOpportunityQualityGuardrails(
+    {
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      interviewChance: '15-25%',
+    },
+    `
+      LinkedIn Job Posting
+
+      Title: Software Engineer
+      Company: Robert Half
+      Source: LinkedIn
+
+      Job Description:
+      Robert Half staffing agency is hiring for a specific client project.
+      The client needs a software engineer for API development and cloud deployment.
+    `,
+  );
+
+  assert.equal(result.companyType, 'Staffing Agency');
+  assert.equal(result.opportunityQuality, 'Medium');
+  assert.equal(result.interviewChance, '5-10%');
+});
+
+test('known low-ROI source remains handled by ROI logic instead of employer-type staffing fallback', () => {
+  const jobDescriptionText = `
+    LinkedIn Job Posting
+
+    Title: Software Engineer
+    Company: Ladders
+    Source: LinkedIn
+
+    Job Description:
+    Build backend services with Python and React dashboards for business users.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore: 7.5,
+      recommendation: APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      strongMatches: ['Python', 'React'],
+      criticalGaps: [],
+      shortReasoning: 'The technical fit is reasonable.',
+    },
+    { resumeText: 'Python React', jobDescriptionText },
+  );
+  const roiOff = applyFinalConsistencyRepair(guarded, {
+    resumeText: 'Python React',
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+  const roiOn = applyFinalConsistencyRepair(guarded, {
+    resumeText: 'Python React',
+    jobDescriptionText,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(roiOff.postingSource, 'Ladders');
+  assert.equal(isKnownLowRoiSource(roiOff.postingSource), true);
+  assert.equal(roiOff.recommendation, APPLY);
+  assert.equal(roiOn.recommendation, SKIP);
+});
+
 test('short reasoning removes unsupported skill claims', () => {
   const result = sanitizeUnsupportedReasoningSkills(
     {
