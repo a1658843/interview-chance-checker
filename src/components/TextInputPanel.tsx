@@ -14,6 +14,7 @@ type TextInputPanelProps = {
   summary?: ReactNode;
   textareaVisible?: boolean;
   textareaActions?: ReactNode;
+  beforeTextarea?: ReactNode;
   centerSummary?: boolean;
   density?: 'normal' | 'compact' | 'working' | 'empty';
   afterTextarea?: ReactNode;
@@ -33,6 +34,7 @@ export function TextInputPanel({
   summary,
   textareaVisible = true,
   textareaActions,
+  beforeTextarea,
   centerSummary = false,
   density = 'normal',
   afterTextarea,
@@ -69,6 +71,7 @@ export function TextInputPanel({
       {textareaVisible ? (
         <>
           {textareaActions ? <div className="mt-3 flex justify-end">{textareaActions}</div> : null}
+          {beforeTextarea ? <div className="mt-3">{beforeTextarea}</div> : null}
           <textarea
             id={id}
             className={`mt-4 flex-1 resize-none rounded-md border border-slate-300 bg-slate-50 p-4 text-sm leading-6 text-slate-900 outline-none transition-colors duration-150 ease-out placeholder:text-slate-500 focus:border-cyan-600 focus:bg-white focus:ring-4 focus:ring-cyan-100 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-900 dark:text-zinc-100 dark:placeholder:text-zinc-500 dark:focus:border-cyan-500 dark:focus:bg-zinc-900 dark:focus:ring-cyan-950 ${

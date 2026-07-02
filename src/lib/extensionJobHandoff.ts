@@ -16,6 +16,13 @@ export type ExtensionHandoffMessage = {
   payload: LinkedInJobHandoffPayload;
 };
 
+type AutoAnalyzeDecisionInput = {
+  hasSavedResume: boolean;
+  currentJobDescriptionText: string;
+  didPopulateJobDescription: boolean;
+  alreadyConsumed: boolean;
+};
+
 const handoffMessageType = 'INTERVIEW_CHANCE_CHECKER_LINKEDIN_HANDOFF';
 const minimumDescriptionLength = 80;
 
@@ -70,6 +77,34 @@ export function parseExtensionHandoffMessage(value: unknown): ExtensionHandoffMe
     handoffId: text(message.handoffId) || undefined,
     payload,
   };
+}
+
+export function getExtensionHandoffKey(message: ExtensionHandoffMessage) {
+  return (
+    message.handoffId ||
+    [
+      message.payload.url,
+      message.payload.title,
+      message.payload.company,
+      message.payload.description.slice(0, 120),
+    ]
+      .filter(Boolean)
+      .join('|')
+  );
+}
+
+export function shouldAutoAnalyzeExtensionHandoff({
+  hasSavedResume,
+  currentJobDescriptionText,
+  didPopulateJobDescription,
+  alreadyConsumed,
+}: AutoAnalyzeDecisionInput) {
+  return (
+    hasSavedResume &&
+    currentJobDescriptionText.trim().length === 0 &&
+    didPopulateJobDescription &&
+    !alreadyConsumed
+  );
 }
 
 export function formatLinkedInJobDescription(payload: LinkedInJobHandoffPayload) {

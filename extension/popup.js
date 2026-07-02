@@ -52,6 +52,28 @@ function createAppTabPattern() {
   return `${appOrigin.replace(/\/$/, '')}/*`;
 }
 
+function sendHandoffToAppBridge(tabId, handoffId) {
+  return new Promise((resolve) => {
+    chrome.tabs.sendMessage(
+      tabId,
+      {
+        type: 'INTERVIEW_CHANCE_CHECKER_CONSUME_HANDOFF',
+        handoffId,
+      },
+      (response) => {
+        resolve(!chrome.runtime.lastError && response?.ok === true);
+      },
+    );
+  });
+}
+
+async function ensureAppBridgeInjected(tabId) {
+  await chrome.scripting.executeScript({
+    target: { tabId },
+    files: ['appBridge.js'],
+  });
+}
+
 async function getActiveTab() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab;
@@ -71,20 +93,32 @@ async function extractCurrentJob(tabId) {
   return result?.result;
 }
 
-async function openOrReuseAppTab(appUrl) {
+async function openOrReuseAppTab(handoffId) {
   const [existingTab] = await chrome.tabs.query({ url: createAppTabPattern() });
+  const appUrl = createAppUrl(handoffId);
 
   if (existingTab?.id) {
-    await chrome.tabs.update(existingTab.id, { active: true, url: appUrl });
+    await chrome.tabs.update(existingTab.id, { active: true });
 
     if (existingTab.windowId) {
       await chrome.windows.update(existingTab.windowId, { focused: true });
     }
 
-    return;
+    if (await sendHandoffToAppBridge(existingTab.id, handoffId)) {
+      return true;
+    }
+
+    try {
+      await ensureAppBridgeInjected(existingTab.id);
+    } catch {
+      return false;
+    }
+
+    return sendHandoffToAppBridge(existingTab.id, handoffId);
   }
 
   await chrome.tabs.create({ url: appUrl });
+  return true;
 }
 
 async function initializePopup() {
@@ -120,7 +154,13 @@ analyzeButton.addEventListener('click', async () => {
 
   const handoffId = createHandoffId();
   await chrome.storage.local.set({ [handoffId]: extractedPayload });
-  await openOrReuseAppTab(createAppUrl(handoffId));
+  const opened = await openOrReuseAppTab(handoffId);
+
+  if (!opened) {
+    analyzeButton.disabled = false;
+    analyzeButton.textContent = 'Analyze this job';
+    setStatus('Could not reach the existing app tab. Refresh the app tab and try again.', 'error');
+  }
 });
 
 initializePopup();

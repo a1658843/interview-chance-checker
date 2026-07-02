@@ -21,8 +21,10 @@ import { extractEmploymentType } from './lib/employmentType';
 import {
   formatLinkedInJobDescription,
   getExtensionHandoffIdFromUrl,
+  getExtensionHandoffKey,
   parseExtensionHandoffMessage,
   removeExtensionHandoffIdFromUrl,
+  shouldAutoAnalyzeExtensionHandoff,
 } from './lib/extensionJobHandoff';
 import { readResumeFile, ResumeImportError } from './lib/resumeImport';
 import { clearSavedResumeText, readSavedResumeText, saveResumeTextLocally } from './lib/resumeStorage';
@@ -68,6 +70,7 @@ function App() {
   const [inputError, setInputError] = useState<string | null>(null);
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
   const [pendingLinkedInJob, setPendingLinkedInJob] = useState<{
+    handoffKey: string;
     title?: string;
     company?: string;
     formattedJobDescription: string;
@@ -79,9 +82,11 @@ function App() {
   const [optimizeForApplicationRoi, setOptimizeForApplicationRoi] = useState(true);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [isJobContextExpanded, setIsJobContextExpanded] = useState(false);
+  const consumedLinkedInHandoffKeysRef = useRef(new Set<string>());
 
   const hasSavedResume = resumeText.trim().length > 0;
-  const canAnalyze = hasSavedResume && jobDescriptionText.trim().length > 0 && !isAnalyzing;
+  const hasPendingLinkedInConflict = Boolean(pendingLinkedInJob);
+  const canAnalyze = hasSavedResume && jobDescriptionText.trim().length > 0 && !isAnalyzing && !hasPendingLinkedInConflict;
   const isInputRowCompact = hasSavedResume && !isResumeTextareaVisible;
   const isResumeSetupCompact = !hasSavedResume && !isResumeTextareaVisible;
   const connectedResumeLabel = hasEditedImportedResume
@@ -138,6 +143,15 @@ function App() {
       }
 
       const formattedJobDescription = formatLinkedInJobDescription(handoffMessage.payload);
+      const handoffKey = getExtensionHandoffKey(handoffMessage);
+      const alreadyConsumed = consumedLinkedInHandoffKeysRef.current.has(handoffKey);
+
+      if (alreadyConsumed) {
+        clearExtensionHandoffUrl();
+        return;
+      }
+
+      consumedLinkedInHandoffKeysRef.current.add(handoffKey);
 
       setInputError(null);
       setAnalysisWarning(null);
@@ -146,10 +160,24 @@ function App() {
         setJobDescriptionText(formattedJobDescription);
         setPendingLinkedInJob(null);
         clearExtensionHandoffUrl();
+
+        if (
+          !isAnalyzing &&
+          shouldAutoAnalyzeExtensionHandoff({
+            hasSavedResume,
+            currentJobDescriptionText: jobDescriptionText,
+            didPopulateJobDescription: true,
+            alreadyConsumed,
+          })
+        ) {
+          void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi);
+        }
+
         return;
       }
 
       setPendingLinkedInJob({
+        handoffKey,
         title: handoffMessage.payload.title,
         company: handoffMessage.payload.company,
         formattedJobDescription,
@@ -158,11 +186,11 @@ function App() {
 
     window.addEventListener('message', handleExtensionHandoff);
     return () => window.removeEventListener('message', handleExtensionHandoff);
-  }, [jobDescriptionText]);
+  }, [hasSavedResume, isAnalyzing, jobDescriptionText, optimizeForApplicationRoi, resumeText]);
 
-  function ensureDecisionSignals(analysis: AnalysisResult) {
+  function ensureDecisionSignals(analysis: AnalysisResult, sourceJobDescriptionText = jobDescriptionText) {
     const applicationRequirements = Array.from(
-      new Set([...analysis.applicationRequirements, ...extractApplicationRequirements(jobDescriptionText)]),
+      new Set([...analysis.applicationRequirements, ...extractApplicationRequirements(sourceJobDescriptionText)]),
     );
     const technicalRecommendation = analysis.technicalRecommendation ?? analysis.recommendation;
     const technicalReasoning = analysis.technicalReasoning ?? analysis.reasoning;
@@ -177,7 +205,7 @@ function App() {
       roiReasoning,
       applicationRequirements,
       effortLevel: getEffortLevel(applicationRequirements),
-      employmentType: analysis.employmentType ?? extractEmploymentType(jobDescriptionText) ?? undefined,
+      employmentType: analysis.employmentType ?? extractEmploymentType(sourceJobDescriptionText) ?? undefined,
     };
   }
 
@@ -197,12 +225,12 @@ function App() {
     };
   }
 
-  async function handleAnalyze() {
-    if (!canAnalyze) {
-      return;
-    }
-
-    const validationError = validateAnalysisInputs(resumeText, jobDescriptionText);
+  async function runAnalysis(
+    resumeTextToAnalyze: string,
+    jobDescriptionTextToAnalyze: string,
+    optimizeForApplicationRoiForRun: boolean,
+  ) {
+    const validationError = validateAnalysisInputs(resumeTextToAnalyze, jobDescriptionTextToAnalyze);
 
     if (validationError) {
       setResult(null);
@@ -218,17 +246,30 @@ function App() {
     try {
       setResult(
         ensureDecisionSignals(
-          await analyzeWithApi(resumeText, jobDescriptionText, optimizeForApplicationRoi),
+          await analyzeWithApi(
+            resumeTextToAnalyze,
+            jobDescriptionTextToAnalyze,
+            optimizeForApplicationRoiForRun,
+          ),
+          jobDescriptionTextToAnalyze,
         ),
       );
       setResultVersion((version) => version + 1);
     } catch {
-      setResult(ensureDecisionSignals(analyzeMatch(resumeText, jobDescriptionText)));
+      setResult(ensureDecisionSignals(analyzeMatch(resumeTextToAnalyze, jobDescriptionTextToAnalyze), jobDescriptionTextToAnalyze));
       setResultVersion((version) => version + 1);
       setAnalysisWarning('LLM analysis is unavailable right now, so this result uses the local heuristic fallback.');
     } finally {
       setIsAnalyzing(false);
     }
+  }
+
+  async function handleAnalyze() {
+    if (!canAnalyze) {
+      return;
+    }
+
+    await runAnalysis(resumeText, jobDescriptionText, optimizeForApplicationRoi);
   }
 
   function handleReset() {
@@ -303,11 +344,17 @@ function App() {
       return;
     }
 
-    setJobDescriptionText(pendingLinkedInJob.formattedJobDescription);
+    const formattedJobDescription = pendingLinkedInJob.formattedJobDescription;
+
+    setJobDescriptionText(formattedJobDescription);
     setPendingLinkedInJob(null);
     setInputError(null);
     setAnalysisWarning(null);
     clearExtensionHandoffUrl();
+
+    if (hasSavedResume && !isAnalyzing) {
+      void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi);
+    }
   }
 
   function handleKeepCurrentJobDescription() {
@@ -324,6 +371,12 @@ function App() {
       setIsJobContextExpanded(false);
     }
   }, [resultVersion]);
+
+  useEffect(() => {
+    if (pendingLinkedInJob && hasCompletedAnalysisWorkspace) {
+      setIsJobContextExpanded(true);
+    }
+  }, [hasCompletedAnalysisWorkspace, pendingLinkedInJob]);
 
   function getLinkedInJobMetadata() {
     const metadata = {
@@ -413,6 +466,45 @@ function App() {
     </div>
   ) : undefined;
 
+  function renderLinkedInConflictStrip() {
+    if (!pendingLinkedInJob) {
+      return null;
+    }
+
+    const detectedJob = [pendingLinkedInJob.title, pendingLinkedInJob.company].filter(Boolean).join(' · ');
+
+    return (
+      <div className="rounded-md border border-cyan-200 bg-cyan-50 px-3 py-2 dark:border-cyan-900 dark:bg-cyan-950/30">
+        <div className="flex flex-col gap-2 lg:flex-row lg:items-center lg:justify-between">
+          <div className="min-w-0">
+            <p className="truncate text-xs font-semibold text-slate-950 dark:text-zinc-50">
+              LinkedIn job detected{detectedJob ? `: ${detectedJob}` : ''}
+            </p>
+            <p className="mt-0.5 text-xs leading-5 text-slate-600 dark:text-zinc-300">
+              Replace the current job description?
+            </p>
+          </div>
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
+            <button
+              type="button"
+              onClick={handleReplaceJobDescriptionFromLinkedIn}
+              className="inline-flex h-8 items-center justify-center rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900"
+            >
+              Replace
+            </button>
+            <button
+              type="button"
+              onClick={handleKeepCurrentJobDescription}
+              className="inline-flex h-8 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
+            >
+              Keep current
+            </button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   function renderJobDescriptionPanel(density: 'normal' | 'compact' | 'working' | 'empty' = 'normal') {
     return (
       <TextInputPanel
@@ -423,6 +515,7 @@ function App() {
         value={jobDescriptionText}
         actions={jobDescriptionActions}
         density={density}
+        beforeTextarea={renderLinkedInConflictStrip()}
         afterTextarea={
           density === 'empty' ? (
             <p className="text-xs leading-5 text-slate-500 dark:text-zinc-400">
@@ -440,7 +533,7 @@ function App() {
   }
 
   function renderPreAnalysisStatusStrip() {
-    if (!hasSavedResumeNoResultWorkspace || inputError || isAnalyzing) {
+    if (!hasSavedResumeNoResultWorkspace || inputError || isAnalyzing || hasPendingLinkedInConflict) {
       return null;
     }
 
@@ -508,6 +601,7 @@ function App() {
         className="rounded-lg border border-slate-300 bg-white px-5 py-4 shadow-sm dark:border-zinc-700 dark:bg-zinc-800"
       >
         {jobDescriptionActions ? <div className="mb-3 flex justify-end">{jobDescriptionActions}</div> : null}
+        {pendingLinkedInJob ? <div className="mb-3">{renderLinkedInConflictStrip()}</div> : null}
         <textarea
           aria-label="Job description"
           id="job-description-context-text"
@@ -605,38 +699,6 @@ function App() {
         </header>
 
         <section className="space-y-4">
-          {pendingLinkedInJob ? (
-            <article className="rounded-lg border border-cyan-200 bg-cyan-50 px-4 py-3 shadow-sm dark:border-cyan-900 dark:bg-cyan-950/40">
-              <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-                <div>
-                  <h2 className="text-sm font-semibold text-slate-950 dark:text-zinc-50">
-                    LinkedIn job ready to import
-                  </h2>
-                  <p className="mt-1 text-sm leading-6 text-slate-600 dark:text-zinc-300">
-                    Replace the current job description with
-                    {pendingLinkedInJob.title ? ` ${pendingLinkedInJob.title}` : ' the LinkedIn job'}
-                    {pendingLinkedInJob.company ? ` at ${pendingLinkedInJob.company}` : ''}?
-                  </p>
-                </div>
-                <div className="flex shrink-0 flex-wrap items-center gap-2">
-                  <button
-                    type="button"
-                    onClick={handleReplaceJobDescriptionFromLinkedIn}
-                    className="inline-flex h-9 items-center justify-center rounded-md bg-cyan-700 px-3 text-xs font-semibold text-white shadow-sm transition-colors duration-150 ease-out hover:bg-cyan-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:bg-cyan-600 dark:hover:bg-cyan-500 dark:focus-visible:ring-cyan-900"
-                  >
-                    Replace current job description
-                  </button>
-                  <button
-                    type="button"
-                    onClick={handleKeepCurrentJobDescription}
-                    className="inline-flex h-9 items-center justify-center rounded-md border border-slate-300 bg-white px-3 text-xs font-semibold text-slate-700 shadow-sm transition-colors duration-150 ease-out hover:bg-slate-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-cyan-200 motion-reduce:transition-none dark:border-zinc-700 dark:bg-zinc-800 dark:text-zinc-100 dark:hover:bg-zinc-700 dark:focus-visible:ring-cyan-900"
-                  >
-                    Keep current text
-                  </button>
-                </div>
-              </div>
-            </article>
-          ) : null}
           <input
             ref={fileInputRef}
             type="file"

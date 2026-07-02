@@ -270,9 +270,11 @@ test('extension handoff rejects empty or too-short descriptions', async () => {
 });
 
 test('extension handoff can auto-populate an empty job description', async () => {
-  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
-    '../src/lib/extensionJobHandoff.ts',
-  );
+  const {
+    formatLinkedInJobDescription,
+    shouldAutoAnalyzeExtensionHandoff,
+    validateLinkedInJobHandoffPayload,
+  } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
   const payload = validateLinkedInJobHandoffPayload({
     source: 'linkedin',
     title: 'Frontend Engineer',
@@ -286,12 +288,23 @@ test('extension handoff can auto-populate an empty job description', async () =>
   }
 
   assert.match(jobDescriptionText, /Frontend Engineer/);
+  assert.equal(
+    shouldAutoAnalyzeExtensionHandoff({
+      hasSavedResume: true,
+      currentJobDescriptionText: '',
+      didPopulateJobDescription: true,
+      alreadyConsumed: false,
+    }),
+    true,
+  );
 });
 
-test('extension handoff preserves existing job description until user chooses replace', async () => {
-  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
-    '../src/lib/extensionJobHandoff.ts',
-  );
+test('extension handoff with existing job description waits for user choice before auto-analysis', async () => {
+  const {
+    formatLinkedInJobDescription,
+    shouldAutoAnalyzeExtensionHandoff,
+    validateLinkedInJobHandoffPayload,
+  } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
   const payload = validateLinkedInJobHandoffPayload({
     source: 'linkedin',
     title: 'Backend Engineer',
@@ -307,6 +320,124 @@ test('extension handoff preserves existing job description until user chooses re
 
   assert.equal(jobDescriptionText, 'Existing pasted JD');
   assert.match(pendingLinkedInJob, /Backend Engineer/);
+  assert.equal(
+    shouldAutoAnalyzeExtensionHandoff({
+      hasSavedResume: true,
+      currentJobDescriptionText: jobDescriptionText,
+      didPopulateJobDescription: false,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
+});
+
+test('extension handoff replace choice can auto-analyze once while keep choice does not', async () => {
+  const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
+    '../src/lib/extensionJobHandoff.ts',
+  );
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Backend Engineer',
+    description:
+      'Build APIs, own backend services, work with SQL databases, and collaborate with engineering teams on product features.',
+  });
+  assert.ok(payload);
+
+  const incomingJobDescription = formatLinkedInJobDescription(payload);
+  let currentJobDescription = 'Existing pasted JD';
+  let analyzeCount = 0;
+
+  function replaceCurrentJobDescription() {
+    currentJobDescription = incomingJobDescription;
+    analyzeCount += 1;
+  }
+
+  replaceCurrentJobDescription();
+
+  assert.match(currentJobDescription, /Backend Engineer/);
+  assert.equal(analyzeCount, 1);
+
+  currentJobDescription = 'Existing pasted JD';
+  analyzeCount = 0;
+
+  function keepCurrentJobDescription() {
+    return;
+  }
+
+  keepCurrentJobDescription();
+
+  assert.equal(currentJobDescription, 'Existing pasted JD');
+  assert.equal(analyzeCount, 0);
+});
+
+test('extension handoff without saved resume populates JD but does not auto-analyze', async () => {
+  const { shouldAutoAnalyzeExtensionHandoff } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+
+  assert.equal(
+    shouldAutoAnalyzeExtensionHandoff({
+      hasSavedResume: false,
+      currentJobDescriptionText: '',
+      didPopulateJobDescription: true,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
+});
+
+test('duplicate or replayed extension handoff does not auto-analyze again', async () => {
+  const {
+    getExtensionHandoffKey,
+    parseExtensionHandoffMessage,
+    shouldAutoAnalyzeExtensionHandoff,
+  } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+  const message = parseExtensionHandoffMessage({
+    type: 'INTERVIEW_CHANCE_CHECKER_LINKEDIN_HANDOFF',
+    handoffId: 'handoff-123',
+    payload: {
+      source: 'linkedin',
+      title: 'Software Engineer',
+      description:
+        'Build software, collaborate with cross-functional partners, improve systems, and support reliable production workflows.',
+    },
+  });
+  assert.ok(message);
+
+  const consumed = new Set();
+  let analyzeCount = 0;
+
+  for (let index = 0; index < 2; index += 1) {
+    const key = getExtensionHandoffKey(message);
+    const alreadyConsumed = consumed.has(key);
+
+    if (
+      shouldAutoAnalyzeExtensionHandoff({
+        hasSavedResume: true,
+        currentJobDescriptionText: '',
+        didPopulateJobDescription: true,
+        alreadyConsumed,
+      })
+    ) {
+      analyzeCount += 1;
+    }
+
+    consumed.add(key);
+  }
+
+  assert.equal(analyzeCount, 1);
+});
+
+test('manual paste flow does not auto-run extension analysis', async () => {
+  const { shouldAutoAnalyzeExtensionHandoff } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+
+  assert.equal(
+    shouldAutoAnalyzeExtensionHandoff({
+      hasSavedResume: true,
+      currentJobDescriptionText: '',
+      didPopulateJobDescription: false,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
 });
 
 test('extension handoff removes only the consumed handoff id from app URL', async () => {
