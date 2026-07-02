@@ -11,7 +11,70 @@ function getEmploymentTypeFromLabel(value: string): EmploymentType | null {
   if (/^part[- ]?time$/.test(normalized)) return 'Part-Time';
   if (/^contract$/.test(normalized) || /^temporary$/.test(normalized)) return 'Contract';
   if (/^internship$/.test(normalized) || /^intern$/.test(normalized)) return 'Internship';
+  if (/^volunteer$/.test(normalized)) return 'Volunteer';
+  if (/^unpaid$/.test(normalized)) return 'Unpaid';
+  if (/^volunteer\s*\(?unpaid\)?$/.test(normalized) || /^unpaid\s+volunteer$/.test(normalized)) {
+    return 'Volunteer (Unpaid)';
+  }
   return null;
+}
+
+function normalizeForUnpaidVolunteerDetection(value: string) {
+  return String(value ?? '')
+    .toLowerCase()
+    .replace(/[–—]/g, '-')
+    .replace(/[_\t]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function hasVolunteerSignal(text: string) {
+  const normalized = normalizeForUnpaidVolunteerDetection(text);
+
+  return (
+    /\bemployment type\s*:\s*volunteer\b/i.test(text) ||
+    /\b(?:job|position|role|work)\s+type\s*:\s*volunteer\b/i.test(text) ||
+    /^\s*volunteer\s*$/im.test(text) ||
+    /\bunpaid volunteer\b/.test(normalized) ||
+    /\bvolunteer\s+(?:developer|engineer|designer|intern|role|position|opportunity|setting|work)\b/.test(normalized) ||
+    /\b(?:developer|engineer|designer|intern)\s+volunteer\b/.test(normalized) ||
+    /\bremote volunteer role\b/.test(normalized)
+  );
+}
+
+function hasUnpaidSignal(text: string) {
+  const normalized = normalizeForUnpaidVolunteerDetection(text);
+
+  return (
+    /\bunpaid\b/.test(normalized) ||
+    /\bnon[- ]compensated\b/.test(normalized) ||
+    /\bno compensation\b/.test(normalized) ||
+    /\bwithout compensation\b/.test(normalized) ||
+    /\bstipend only\b/.test(normalized) ||
+    /\bportfolio[- ]building volunteer opportunity\b/.test(normalized)
+  );
+}
+
+export function detectUnpaidVolunteerStatus(jobDescriptionText: string) {
+  const text = String(jobDescriptionText ?? '');
+  const isVolunteer = hasVolunteerSignal(text);
+  const isUnpaid = hasUnpaidSignal(text);
+
+  if (!isVolunteer && !isUnpaid) {
+    return {
+      isVolunteer: false,
+      isUnpaid: false,
+      employmentType: null as EmploymentType | null,
+      isApplicationBlocker: false,
+    };
+  }
+
+  return {
+    isVolunteer,
+    isUnpaid,
+    employmentType: (isVolunteer && isUnpaid ? 'Volunteer (Unpaid)' : isVolunteer ? 'Volunteer' : 'Unpaid') as EmploymentType,
+    isApplicationBlocker: true,
+  };
 }
 
 function extractLinkedInMetadataType(text: string): EmploymentType | null {
@@ -111,6 +174,12 @@ function getFallbackContractCount(text: string) {
 
 export function extractEmploymentType(jobDescriptionText: string): EmploymentType | null {
   const text = String(jobDescriptionText ?? '');
+  const unpaidVolunteerStatus = detectUnpaidVolunteerStatus(text);
+
+  if (unpaidVolunteerStatus.employmentType) {
+    return unpaidVolunteerStatus.employmentType;
+  }
+
   const metadataType = extractLinkedInMetadataType(text);
   if (metadataType) return metadataType;
 

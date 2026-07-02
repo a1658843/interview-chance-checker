@@ -25,10 +25,17 @@ import {
   parseExtensionHandoffMessage,
   removeExtensionHandoffIdFromUrl,
   shouldAutoAnalyzeExtensionHandoff,
+  shouldAutoReplaceAnalyzedJobDescription,
 } from './lib/extensionJobHandoff';
 import { readResumeFile, ResumeImportError } from './lib/resumeImport';
 import { clearSavedResumeText, readSavedResumeText, saveResumeTextLocally } from './lib/resumeStorage';
-import { validateAnalysisInputs } from './lib/validation';
+import {
+  getAnalysisInputValidationDebug,
+  shouldShowValidationDebug,
+  validateAnalysisInputs,
+  type AnalysisInputValidationDebug,
+  type JobDescriptionInputSource,
+} from './lib/validation';
 import type { AnalysisResult } from './types/analysis';
 
 type Theme = 'light' | 'dark';
@@ -59,6 +66,10 @@ function getInitialTheme(): Theme {
   return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
 }
 
+function isDevelopmentMode() {
+  return Boolean((import.meta as ImportMeta & { env?: { DEV?: boolean } }).env?.DEV);
+}
+
 function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [resumeText, setResumeText] = useState(getInitialResumeText);
@@ -66,8 +77,10 @@ function App() {
   const [importedResumeFileName, setImportedResumeFileName] = useState<string | null>(null);
   const [hasEditedImportedResume, setHasEditedImportedResume] = useState(false);
   const [jobDescriptionText, setJobDescriptionText] = useState('');
+  const [jobDescriptionSource, setJobDescriptionSource] = useState<JobDescriptionInputSource>('unknown');
   const [result, setResult] = useState<AnalysisResult | null>(null);
   const [inputError, setInputError] = useState<string | null>(null);
+  const [validationDebug, setValidationDebug] = useState<AnalysisInputValidationDebug | null>(null);
   const [analysisWarning, setAnalysisWarning] = useState<string | null>(null);
   const [pendingLinkedInJob, setPendingLinkedInJob] = useState<{
     handoffKey: string;
@@ -82,10 +95,15 @@ function App() {
   const [optimizeForApplicationRoi, setOptimizeForApplicationRoi] = useState(true);
   const [theme, setTheme] = useState<Theme>(getInitialTheme);
   const [isJobContextExpanded, setIsJobContextExpanded] = useState(false);
+  const [lastCompletedAnalysisJobDescriptionText, setLastCompletedAnalysisJobDescriptionText] = useState<string | null>(null);
   const consumedLinkedInHandoffKeysRef = useRef(new Set<string>());
 
   const hasSavedResume = resumeText.trim().length > 0;
   const hasPendingLinkedInConflict = Boolean(pendingLinkedInJob);
+  const hasCompletedAnalysisForCurrentJobDescription =
+    Boolean(result) &&
+    lastCompletedAnalysisJobDescriptionText !== null &&
+    jobDescriptionText === lastCompletedAnalysisJobDescriptionText;
   const canAnalyze = hasSavedResume && jobDescriptionText.trim().length > 0 && !isAnalyzing && !hasPendingLinkedInConflict;
   const isInputRowCompact = hasSavedResume && !isResumeTextareaVisible;
   const isResumeSetupCompact = !hasSavedResume && !isResumeTextareaVisible;
@@ -154,10 +172,12 @@ function App() {
       consumedLinkedInHandoffKeysRef.current.add(handoffKey);
 
       setInputError(null);
+      setValidationDebug(null);
       setAnalysisWarning(null);
 
       if (jobDescriptionText.trim().length === 0) {
         setJobDescriptionText(formattedJobDescription);
+        setJobDescriptionSource('extension_handoff');
         setPendingLinkedInJob(null);
         clearExtensionHandoffUrl();
 
@@ -170,7 +190,28 @@ function App() {
             alreadyConsumed,
           })
         ) {
-          void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi);
+          void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi, 'extension_handoff');
+        }
+
+        return;
+      }
+
+      if (
+        shouldAutoReplaceAnalyzedJobDescription({
+          hasCompletedAnalysisForCurrentJobDescription,
+          isAnalyzing,
+          hasPendingLinkedInConflict,
+          alreadyConsumed,
+        })
+      ) {
+        setJobDescriptionText(formattedJobDescription);
+        setJobDescriptionSource('extension_handoff');
+        setPendingLinkedInJob(null);
+        setResult(null);
+        clearExtensionHandoffUrl();
+
+        if (hasSavedResume) {
+          void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi, 'extension_handoff');
         }
 
         return;
@@ -186,7 +227,15 @@ function App() {
 
     window.addEventListener('message', handleExtensionHandoff);
     return () => window.removeEventListener('message', handleExtensionHandoff);
-  }, [hasSavedResume, isAnalyzing, jobDescriptionText, optimizeForApplicationRoi, resumeText]);
+  }, [
+    hasCompletedAnalysisForCurrentJobDescription,
+    hasPendingLinkedInConflict,
+    hasSavedResume,
+    isAnalyzing,
+    jobDescriptionText,
+    optimizeForApplicationRoi,
+    resumeText,
+  ]);
 
   function ensureDecisionSignals(analysis: AnalysisResult, sourceJobDescriptionText = jobDescriptionText) {
     const applicationRequirements = Array.from(
@@ -229,17 +278,29 @@ function App() {
     resumeTextToAnalyze: string,
     jobDescriptionTextToAnalyze: string,
     optimizeForApplicationRoiForRun: boolean,
+    inputSource: JobDescriptionInputSource = jobDescriptionSource,
   ) {
-    const validationError = validateAnalysisInputs(resumeTextToAnalyze, jobDescriptionTextToAnalyze);
+    const validationError = validateAnalysisInputs(resumeTextToAnalyze, jobDescriptionTextToAnalyze, inputSource);
 
     if (validationError) {
+      const debug = getAnalysisInputValidationDebug(resumeTextToAnalyze, jobDescriptionTextToAnalyze, inputSource);
+
+      if (shouldShowValidationDebug(isDevelopmentMode(), debug)) {
+        setValidationDebug(debug);
+        console.warn('VALIDATION_DEBUG', debug);
+      } else {
+        setValidationDebug(null);
+      }
+
       setResult(null);
+      setLastCompletedAnalysisJobDescriptionText(null);
       setInputError(validationError);
       setAnalysisWarning(null);
       return;
     }
 
     setInputError(null);
+    setValidationDebug(null);
     setAnalysisWarning(null);
     setIsAnalyzing(true);
 
@@ -254,9 +315,11 @@ function App() {
           jobDescriptionTextToAnalyze,
         ),
       );
+      setLastCompletedAnalysisJobDescriptionText(jobDescriptionTextToAnalyze);
       setResultVersion((version) => version + 1);
     } catch {
       setResult(ensureDecisionSignals(analyzeMatch(resumeTextToAnalyze, jobDescriptionTextToAnalyze), jobDescriptionTextToAnalyze));
+      setLastCompletedAnalysisJobDescriptionText(jobDescriptionTextToAnalyze);
       setResultVersion((version) => version + 1);
       setAnalysisWarning('LLM analysis is unavailable right now, so this result uses the local heuristic fallback.');
     } finally {
@@ -274,8 +337,11 @@ function App() {
 
   function handleReset() {
     setJobDescriptionText('');
+    setJobDescriptionSource('unknown');
     setResult(null);
+    setLastCompletedAnalysisJobDescriptionText(null);
     setInputError(null);
+    setValidationDebug(null);
     setAnalysisWarning(null);
     setResumeImportError(null);
     setIsAnalyzing(false);
@@ -298,6 +364,7 @@ function App() {
       setIsResumeTextareaVisible(false);
       setResult(null);
       setInputError(null);
+      setValidationDebug(null);
       setAnalysisWarning(null);
     } catch (error) {
       setResumeImportError(
@@ -335,6 +402,7 @@ function App() {
     setIsResumeTextareaVisible(false);
     setResult(null);
     setInputError(null);
+    setValidationDebug(null);
     setAnalysisWarning(null);
     setResumeImportError(null);
   }
@@ -347,13 +415,15 @@ function App() {
     const formattedJobDescription = pendingLinkedInJob.formattedJobDescription;
 
     setJobDescriptionText(formattedJobDescription);
+    setJobDescriptionSource('extension_handoff');
     setPendingLinkedInJob(null);
     setInputError(null);
+    setValidationDebug(null);
     setAnalysisWarning(null);
     clearExtensionHandoffUrl();
 
     if (hasSavedResume && !isAnalyzing) {
-      void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi);
+      void runAnalysis(resumeText, formattedJobDescription, optimizeForApplicationRoi, 'extension_handoff');
     }
   }
 
@@ -525,7 +595,9 @@ function App() {
         }
         onChange={(value) => {
           setJobDescriptionText(value);
+          setJobDescriptionSource('manual_paste');
           setInputError(null);
+          setValidationDebug(null);
           setAnalysisWarning(null);
         }}
       />
@@ -609,7 +681,9 @@ function App() {
           value={jobDescriptionText}
           onChange={(event) => {
             setJobDescriptionText(event.target.value);
+            setJobDescriptionSource('manual_paste');
             setInputError(null);
+            setValidationDebug(null);
             setAnalysisWarning(null);
           }}
           placeholder="Paste job description here..."
@@ -716,6 +790,7 @@ function App() {
                 isAnalyzing={isAnalyzing}
                 resultVersion={resultVersion}
                 scoreContextActions={completedJobContextActions}
+                validationDebug={validationDebug}
               />
               {renderExpandedJobDescriptionContext()}
             </>
@@ -777,6 +852,7 @@ function App() {
                     setHasEditedImportedResume(true);
                   }
                   setInputError(null);
+                  setValidationDebug(null);
                   setAnalysisWarning(null);
                   setResumeImportError(null);
                 }}
@@ -838,6 +914,7 @@ function App() {
             analysisWarning={analysisWarning}
             isAnalyzing={isAnalyzing}
             resultVersion={resultVersion}
+            validationDebug={validationDebug}
           />
         ) : null}
       </div>

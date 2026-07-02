@@ -331,6 +331,124 @@ test('extension handoff with existing job description waits for user choice befo
   );
 });
 
+test('extension handoff auto-replaces a completed unchanged analyzed JD', async () => {
+  const {
+    formatLinkedInJobDescription,
+    shouldAutoReplaceAnalyzedJobDescription,
+    validateLinkedInJobHandoffPayload,
+  } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+  const payload = validateLinkedInJobHandoffPayload({
+    source: 'linkedin',
+    title: 'Next Software Engineer',
+    company: 'Next Co',
+    description:
+      'Build product features, collaborate with engineering partners, improve APIs, and support reliable production workflows.',
+  });
+  assert.ok(payload);
+
+  const oldJobDescription = 'LinkedIn Job Posting\n\nTitle: Previous Job\n\nJob Description:\nPrevious job details.';
+  const lastCompletedAnalysisJobDescriptionText = oldJobDescription;
+  let jobDescriptionText = oldJobDescription;
+  let result = { recommendation: 'Skip ❌' };
+  let analyzeCount = 0;
+  let pendingLinkedInJob = null;
+
+  if (
+    shouldAutoReplaceAnalyzedJobDescription({
+      hasCompletedAnalysisForCurrentJobDescription:
+        Boolean(result) && jobDescriptionText === lastCompletedAnalysisJobDescriptionText,
+      isAnalyzing: false,
+      hasPendingLinkedInConflict: false,
+      alreadyConsumed: false,
+    })
+  ) {
+    jobDescriptionText = formatLinkedInJobDescription(payload);
+    result = null;
+    analyzeCount += 1;
+  } else {
+    pendingLinkedInJob = formatLinkedInJobDescription(payload);
+  }
+
+  assert.match(jobDescriptionText, /Next Software Engineer/);
+  assert.equal(result, null);
+  assert.equal(analyzeCount, 1);
+  assert.equal(pendingLinkedInJob, null);
+});
+
+test('extension handoff keeps Replace/Keep prompt for existing JD with no result', async () => {
+  const { shouldAutoReplaceAnalyzedJobDescription } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+
+  assert.equal(
+    shouldAutoReplaceAnalyzedJobDescription({
+      hasCompletedAnalysisForCurrentJobDescription: false,
+      isAnalyzing: false,
+      hasPendingLinkedInConflict: false,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
+});
+
+test('extension handoff keeps Replace/Keep prompt after analyzed JD was edited', async () => {
+  const { shouldAutoReplaceAnalyzedJobDescription } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+  const lastCompletedAnalysisJobDescriptionText = 'Analyzed JD';
+  const editedJobDescriptionText = 'Analyzed JD with edits';
+  const result = { recommendation: 'Apply ✅' };
+
+  assert.equal(
+    shouldAutoReplaceAnalyzedJobDescription({
+      hasCompletedAnalysisForCurrentJobDescription:
+        Boolean(result) && editedJobDescriptionText === lastCompletedAnalysisJobDescriptionText,
+      isAnalyzing: false,
+      hasPendingLinkedInConflict: false,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
+});
+
+test('extension handoff does not auto-replace duplicate events or while analyzing', async () => {
+  const { shouldAutoReplaceAnalyzedJobDescription } = await importTypeScriptModule('../src/lib/extensionJobHandoff.ts');
+
+  assert.equal(
+    shouldAutoReplaceAnalyzedJobDescription({
+      hasCompletedAnalysisForCurrentJobDescription: true,
+      isAnalyzing: false,
+      hasPendingLinkedInConflict: false,
+      alreadyConsumed: true,
+    }),
+    false,
+  );
+  assert.equal(
+    shouldAutoReplaceAnalyzedJobDescription({
+      hasCompletedAnalysisForCurrentJobDescription: true,
+      isAnalyzing: true,
+      hasPendingLinkedInConflict: false,
+      alreadyConsumed: false,
+    }),
+    false,
+  );
+});
+
+test('extension handoff keep current preserves current JD and existing result', async () => {
+  let currentJobDescription = 'Existing analyzed JD';
+  const existingResult = { recommendation: 'Apply ✅' };
+  let result = existingResult;
+  let analyzeCount = 0;
+  let pendingLinkedInJob = 'Incoming LinkedIn JD';
+
+  function keepCurrentJobDescription() {
+    pendingLinkedInJob = null;
+  }
+
+  keepCurrentJobDescription();
+
+  assert.equal(currentJobDescription, 'Existing analyzed JD');
+  assert.equal(result, existingResult);
+  assert.equal(analyzeCount, 0);
+  assert.equal(pendingLinkedInJob, null);
+});
+
 test('extension handoff replace choice can auto-analyze once while keep choice does not', async () => {
   const { formatLinkedInJobDescription, validateLinkedInJobHandoffPayload } = await importTypeScriptModule(
     '../src/lib/extensionJobHandoff.ts',

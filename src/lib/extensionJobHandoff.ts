@@ -23,6 +23,13 @@ type AutoAnalyzeDecisionInput = {
   alreadyConsumed: boolean;
 };
 
+type AutoReplaceAnalyzedJobDescriptionInput = {
+  hasCompletedAnalysisForCurrentJobDescription: boolean;
+  isAnalyzing: boolean;
+  hasPendingLinkedInConflict: boolean;
+  alreadyConsumed: boolean;
+};
+
 const handoffMessageType = 'INTERVIEW_CHANCE_CHECKER_LINKEDIN_HANDOFF';
 const minimumDescriptionLength = 80;
 
@@ -103,6 +110,20 @@ export function shouldAutoAnalyzeExtensionHandoff({
     hasSavedResume &&
     currentJobDescriptionText.trim().length === 0 &&
     didPopulateJobDescription &&
+    !alreadyConsumed
+  );
+}
+
+export function shouldAutoReplaceAnalyzedJobDescription({
+  hasCompletedAnalysisForCurrentJobDescription,
+  isAnalyzing,
+  hasPendingLinkedInConflict,
+  alreadyConsumed,
+}: AutoReplaceAnalyzedJobDescriptionInput) {
+  return (
+    hasCompletedAnalysisForCurrentJobDescription &&
+    !isAnalyzing &&
+    !hasPendingLinkedInConflict &&
     !alreadyConsumed
   );
 }

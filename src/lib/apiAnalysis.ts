@@ -66,6 +66,9 @@ const employmentTypeValues: EmploymentType[] = [
   'Full-Time Contract',
   'Contract-to-Hire',
   'Internship',
+  'Volunteer',
+  'Unpaid',
+  'Volunteer (Unpaid)',
 ];
 const allowedApplicationRequirements = new Set([
   'AI Interview Required',

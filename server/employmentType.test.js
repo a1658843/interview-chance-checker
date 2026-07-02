@@ -9,6 +9,40 @@ test('detects explicit full-time employment type', () => {
   );
 });
 
+test('detects volunteer and unpaid employment types', () => {
+  assert.equal(
+    extractEmploymentType(`
+      LinkedIn Job Posting
+      Title: UNPAID VOLUNTEER - Front End Engineer
+      Company: The City Tutors
+      Employment Type: Volunteer
+
+      Job Description:
+      This is a remote volunteer role supporting education technology projects.
+    `),
+    'Volunteer (Unpaid)',
+  );
+  assert.equal(
+    extractEmploymentType('Employment Type: Volunteer\nBuild frontend features for a nonprofit.'),
+    'Volunteer',
+  );
+  assert.equal(
+    extractEmploymentType('This is an unpaid internship for a frontend developer.'),
+    'Unpaid',
+  );
+});
+
+test('paid nonprofit and paid internship language do not trigger unpaid volunteer type', () => {
+  assert.equal(
+    extractEmploymentType('A nonprofit is hiring a paid full-time software engineer with benefits.'),
+    'Full-Time',
+  );
+  assert.equal(
+    extractEmploymentType('This is a paid internship position for summer software engineering work.'),
+    'Internship',
+  );
+});
+
 test('detects explicit contract employment type', () => {
   assert.equal(
     extractEmploymentType('Type: Contract'),

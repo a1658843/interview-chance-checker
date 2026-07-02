@@ -1,6 +1,7 @@
 import { isStrongMatchSupportedByResume, normalizeStrongMatches } from './strongMatches.js';
 import { applyRoiStrategy, hasLowApplicationRoi } from './roiEvaluation.js';
 import { isKnownLowRoiSource } from './knownLowRoiSources.js';
+import { detectUnpaidVolunteerStatus } from './employmentType.js';
 
 const unsupportedReasoningSkills = [
   'Node.js',
@@ -1392,7 +1393,7 @@ function getCriticalGapTexts(analysis) {
 function isDecisionChangingRequiredGap(gap) {
   const value = String(gap ?? '');
 
-  return /\b(required|mandatory|must[- ]have|core|central|production|deployment|cloud|aws|azure|gcp|node\.?js|backend|frontend|domain|platform|java|ios|swift|android|kotlin|salesforce|servicenow|sap|camunda|flowable|bpmn|edi|security clearance|sass|less|state management)\b/i.test(
+  return /\b(required|mandatory|must[- ]have|core|central|production|deployment|cloud|aws|azure|gcp|node\.?js|next\.?js|nextjs|backend|frontend|domain|platform|java|ios|swift|android|kotlin|salesforce|servicenow|sap|camunda|flowable|bpmn|edi|security clearance|sass|less|state management)\b/i.test(
     value,
   );
 }
@@ -1601,6 +1602,37 @@ function getReasoningSentenceLimit(recommendation) {
 function withEmployerTypeReasoning(reasoning, analysis) {
   const employerSentence = getEmployerTypeReasoningSentence(analysis);
   return employerSentence ? `${reasoning} ${employerSentence}` : reasoning;
+}
+
+const unpaidVolunteerReasoning =
+  'This is an unpaid volunteer role. Despite any technical overlap, it is not aligned with a paid full-time job search.';
+
+function getUnpaidVolunteerReasoning(status) {
+  if (status.isVolunteer && status.isUnpaid) {
+    return unpaidVolunteerReasoning;
+  }
+
+  if (status.isVolunteer) {
+    return 'This is a volunteer role. Despite any technical overlap, it is not aligned with a paid full-time job search.';
+  }
+
+  return 'This is an unpaid role. Despite any technical overlap, it is not aligned with a paid full-time job search.';
+}
+
+function applyUnpaidVolunteerBlocker(analysis, jobDescriptionText) {
+  const status = detectUnpaidVolunteerStatus(jobDescriptionText);
+
+  if (!status.isApplicationBlocker) {
+    return analysis;
+  }
+
+  return {
+    ...analysis,
+    recommendation: 'Hard Skip ❌❌',
+    recommendationCap: 'Hard Skip ❌❌',
+    employmentType: status.employmentType ?? analysis?.employmentType,
+    shortReasoning: getUnpaidVolunteerReasoning(status),
+  };
 }
 
 function getDecisionPriority(analysis) {
@@ -1902,6 +1934,10 @@ function getStableDisplayedFitScore(analysis) {
     return 8.0;
   }
 
+  if (hasCombinedExperienceAndCoreGapPattern(criticalGaps) && score >= 7.5 && score < 9) {
+    return 6.5;
+  }
+
   if (criticalGaps.some(isDeterministicRequiredSkillGap) && score >= 7.5 && score < 9) {
     return 8.0;
   }
@@ -1921,6 +1957,10 @@ function getEvidenceStabilizedFitScore(analysis) {
   }
 
   const criticalGaps = getCriticalGapTexts(analysis);
+
+  if (hasCombinedExperienceAndCoreGapPattern(criticalGaps) && score >= 7.5 && score < 9) {
+    return 6.5;
+  }
 
   if (criticalGaps.some(isDeterministicRequiredSkillGap) && score >= 7.5 && score < 9) {
     return 8.0;
@@ -1987,6 +2027,8 @@ function getCriticalGapPriority(gap) {
 const sassLessCriticalGap = 'SASS or LESS experience not demonstrated';
 const stateManagementCriticalGap = 'State management libraries (Redux, Context API) experience not demonstrated';
 const distributedSystemsCriticalGap = 'Distributed systems and data-heavy platform experience missing';
+const frontendYearsCriticalGap = '2+ years frontend development experience requirement not met';
+const nextJsCriticalGap = 'Next.js experience not demonstrated';
 
 function isSassLessCriticalGap(gap) {
   const value = String(gap ?? '').toLowerCase();
@@ -2018,6 +2060,26 @@ function isDistributedSystemsCriticalGap(gap) {
   );
 }
 
+function isFrontendYearsCriticalGap(gap) {
+  const value = String(gap ?? '').toLowerCase();
+
+  return (
+    /\b2\+?\s*(?:\+|plus)?\s*years?\b/i.test(value) &&
+    /\b(frontend|front[- ]end)\b/i.test(value) &&
+    /\b(experience|requirement|not met|missing|not demonstrated)\b/i.test(value)
+  ) || /\bfrontend experience requirement not met\b/i.test(value);
+}
+
+function isNextJsCriticalGap(gap) {
+  const value = String(gap ?? '').toLowerCase();
+
+  return (
+    /\bnext\.?js\b/i.test(value) ||
+    /\bnextjs\b/i.test(value) ||
+    /\bnext js\b/i.test(value)
+  ) && /\b(experience|missing|not demonstrated|not shown|no)\b/i.test(value);
+}
+
 function canonicalizeCriticalGapDisplay(gap) {
   if (isSassLessCriticalGap(gap)) {
     return sassLessCriticalGap;
@@ -2029,6 +2091,14 @@ function canonicalizeCriticalGapDisplay(gap) {
 
   if (isDistributedSystemsCriticalGap(gap)) {
     return distributedSystemsCriticalGap;
+  }
+
+  if (isFrontendYearsCriticalGap(gap)) {
+    return frontendYearsCriticalGap;
+  }
+
+  if (isNextJsCriticalGap(gap)) {
+    return nextJsCriticalGap;
   }
 
   return gap;
@@ -2048,6 +2118,14 @@ function getCriticalGapSemanticKey(gap) {
 
   if (canonicalGap === distributedSystemsCriticalGap) {
     return 'distributed-systems';
+  }
+
+  if (canonicalGap === frontendYearsCriticalGap) {
+    return 'frontend-years-2';
+  }
+
+  if (canonicalGap === nextJsCriticalGap) {
+    return 'next-js';
   }
 
   if (/\b(major|severe|moderate)?\s*experience[- ]level mismatch|seniority mismatch|level mismatch\b/i.test(value)) {
@@ -2140,6 +2218,8 @@ function normalizeSkillText(value) {
   return String(value ?? '')
     .toLowerCase()
     .replace(/node\.js/g, 'nodejs')
+    .replace(/next\.js/g, 'nextjs')
+    .replace(/next\s+js/g, 'nextjs')
     .replace(/vue\.js/g, 'vuejs')
     .replace(/react\.js/g, 'reactjs')
     .replace(/context\s+api/g, 'contextapi')
@@ -2165,11 +2245,13 @@ function hasSkillPhrase(text, phrase) {
 const deterministicRequiredSkillGapCatalog = [
   {
     canonicalGap: sassLessCriticalGap,
+    impact: 'supporting',
     jobSignals: ['sass', 'scss', 'less', 'css preprocessor', 'css preprocessors'],
     resumeSignals: ['sass', 'scss', 'less', 'css preprocessor', 'css preprocessors'],
   },
   {
     canonicalGap: stateManagementCriticalGap,
+    impact: 'supporting',
     jobSignals: [
       'state management',
       'state management libraries',
@@ -2183,6 +2265,7 @@ const deterministicRequiredSkillGapCatalog = [
   },
   {
     canonicalGap: distributedSystemsCriticalGap,
+    impact: 'core',
     jobSignals: [
       'distributed systems',
       'data heavy platforms',
@@ -2216,10 +2299,35 @@ const deterministicRequiredSkillGapCatalog = [
       'distributed data platform ownership',
     ],
   },
+  {
+    canonicalGap: nextJsCriticalGap,
+    impact: 'core',
+    jobSignals: ['next.js', 'nextjs', 'next js'],
+    resumeSignals: ['next.js', 'nextjs', 'next js'],
+  },
 ];
 
 function isDeterministicRequiredSkillGap(gap) {
   return deterministicRequiredSkillGapCatalog.some(({ canonicalGap }) => canonicalGap === gap);
+}
+
+function isCoreDeterministicRequiredSkillGap(gap) {
+  return deterministicRequiredSkillGapCatalog.some(
+    ({ canonicalGap, impact }) => canonicalGap === gap && impact === 'core',
+  );
+}
+
+function hasExplicitYearsExperienceGap(gap) {
+  const value = String(gap ?? '');
+
+  return /\b\d+\+?\s*(?:\+|plus)?\s*years?\b/i.test(value) &&
+    /\b(experience|professional|frontend|front[- ]end|software|engineering|development|developer|requirement)\b/i.test(value) &&
+    /\bnot met\b/i.test(value);
+}
+
+function hasCombinedExperienceAndCoreGapPattern(criticalGaps) {
+  return criticalGaps.some(hasExplicitYearsExperienceGap) &&
+    criticalGaps.some(isCoreDeterministicRequiredSkillGap);
 }
 
 function isExplicitSkillRequirementSentence(sentence, level) {
@@ -2234,6 +2342,55 @@ function isExplicitSkillRequirementSentence(sentence, level) {
   return /\b(requirements?|required|must(?: have)?|need(?:ed)?|proficien(?:t|cy)|experience with|skills? include|tech stack|stack includes|using|with)\b/i.test(
     sentence,
   );
+}
+
+function getResumeFrontendExperienceYears(resumeText) {
+  const text = String(resumeText ?? '');
+  const years = [];
+  const patterns = [
+    /\b(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\s+(?:of\s+)?(?:professional\s+)?(?:front[- ]?end|frontend)\s+(?:development|developer|engineering|engineer|experience|work)\b/gi,
+    /\b(front[- ]?end|frontend)\s+(?:development|developer|engineering|engineer|experience|work)[^.\n]{0,60}\b(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/gi,
+  ];
+
+  for (const pattern of patterns) {
+    for (const match of text.matchAll(pattern)) {
+      years.push(Number(match[1] && /^\d+$/.test(match[1]) ? match[1] : match[2]));
+    }
+  }
+
+  return maxNumber(years);
+}
+
+function hasRequiredFrontendYearsGap(resumeText, jobDescriptionText) {
+  const requiredFrontendYears = [];
+  const requirementSentences = parseJobRequirementSentences(jobDescriptionText).filter(
+    ({ sentence, level }) =>
+      !['preferred', 'desired', 'bonus'].includes(level) &&
+      (level === 'required' || !hasPreferredLanguage(sentence)) &&
+      isExplicitSkillRequirementSentence(sentence, level),
+  );
+
+  for (const { sentence } of requirementSentences) {
+    const mentionsFrontend = /\b(front[- ]?end|frontend)\b/i.test(sentence);
+    const mentionsDevelopment = /\b(development|developer|engineering|engineer|experience)\b/i.test(sentence);
+
+    if (!mentionsFrontend || !mentionsDevelopment) {
+      continue;
+    }
+
+    for (const match of sentence.matchAll(/\b(?:at least|minimum of|minimum|required)?\s*(\d{1,2})\+?\s*(?:\+|plus)?\s*years?\b/gi)) {
+      requiredFrontendYears.push(Number(match[1]));
+    }
+  }
+
+  const requiredYears = maxNumber(requiredFrontendYears);
+
+  if (requiredYears === null || requiredYears < 2) {
+    return false;
+  }
+
+  const resumeFrontendYears = getResumeFrontendExperienceYears(resumeText);
+  return resumeFrontendYears === null || resumeFrontendYears < requiredYears;
 }
 
 function getDeterministicRequiredSkillGaps(resumeText, jobDescriptionText) {
@@ -2260,6 +2417,10 @@ function getDeterministicRequiredSkillGaps(resumeText, jobDescriptionText) {
     if (!isSupportedByResume) {
       gaps.push(canonicalGap);
     }
+  }
+
+  if (hasRequiredFrontendYearsGap(resumeText, jobDescriptionText)) {
+    gaps.push(frontendYearsCriticalGap);
   }
 
   return gaps;
@@ -2372,15 +2533,20 @@ export function applyFinalConsistencyRepair(
     jobDescriptionText,
     optimizeForApplicationRoi: true,
   });
-  const selectedAnalysis = optimizeForApplicationRoi ? roiStrategyAnalysis : technicalAnalysis;
+  const selectedAnalysisBeforeUnpaidVolunteerBlocker = optimizeForApplicationRoi ? roiStrategyAnalysis : technicalAnalysis;
+  const displayedFitScore = getStableDisplayedFitScore(selectedAnalysisBeforeUnpaidVolunteerBlocker);
+  const selectedAnalysis = applyUnpaidVolunteerBlocker(
+    selectedAnalysisBeforeUnpaidVolunteerBlocker,
+    jobDescriptionText,
+  );
 
   return stripInternalFields({
     ...selectedAnalysis,
-    fitScore: getStableDisplayedFitScore(selectedAnalysis),
-    technicalRecommendation: technicalAnalysis.recommendation,
-    technicalReasoning: technicalAnalysis.shortReasoning,
-    roiRecommendation: roiStrategyAnalysis.recommendation,
-    roiReasoning: roiStrategyAnalysis.shortReasoning,
+    fitScore: displayedFitScore,
+    technicalRecommendation: applyUnpaidVolunteerBlocker(technicalAnalysis, jobDescriptionText).recommendation,
+    technicalReasoning: applyUnpaidVolunteerBlocker(technicalAnalysis, jobDescriptionText).shortReasoning,
+    roiRecommendation: applyUnpaidVolunteerBlocker(roiStrategyAnalysis, jobDescriptionText).recommendation,
+    roiReasoning: applyUnpaidVolunteerBlocker(roiStrategyAnalysis, jobDescriptionText).shortReasoning,
   });
 }
 

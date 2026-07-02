@@ -1,6 +1,7 @@
 import { CheckCircle2, ChevronDown, CircleAlert, Loader2, type LucideIcon, Sparkles, TriangleAlert } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
+import type { AnalysisInputValidationDebug } from '../lib/validation';
 import type { AnalysisResult } from '../types/analysis';
 import { ScoreCard } from './ScoreCard';
 
@@ -11,6 +12,7 @@ type ResultsPanelProps = {
   isAnalyzing?: boolean;
   resultVersion?: number;
   scoreContextActions?: ReactNode;
+  validationDebug?: AnalysisInputValidationDebug | null;
 };
 
 type ListSectionProps = {
@@ -177,6 +179,66 @@ function LoadingIndicator() {
   );
 }
 
+function DebugList({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div>
+      <dt className="font-semibold text-slate-800 dark:text-zinc-100">{label}</dt>
+      <dd className="mt-1 break-words text-slate-600 dark:text-zinc-300">
+        {values.length > 0 ? values.join(', ') : 'none'}
+      </dd>
+    </div>
+  );
+}
+
+function ValidationDebugPanel({ debug }: { debug: AnalysisInputValidationDebug }) {
+  const jobDebug = debug.jobDescriptionValidationDebug;
+
+  return (
+    <details className="mx-auto mt-4 max-w-3xl rounded-md border border-amber-300 bg-white/70 text-left shadow-sm dark:border-amber-500/40 dark:bg-zinc-900/60">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-semibold text-slate-900 dark:text-zinc-100">
+        Validation debug (development only)
+      </summary>
+      <dl className="grid gap-3 border-t border-amber-200 px-4 py-3 text-xs leading-5 dark:border-amber-500/30 sm:grid-cols-2">
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Input source</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{jobDebug.inputSource}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Triggered rule</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{jobDebug.triggeredRule ?? 'none'}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Resume length</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{jobDebug.resumeLength}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Job description length</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{jobDebug.normalizedLength}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">LinkedIn job payload detected</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{String(jobDebug.isLinkedInJobPayload)}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Phone-like URL ignored</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{String(jobDebug.phoneLikeUrlIgnored)}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Contains LinkedIn jobs URL</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{String(jobDebug.containsLinkedInJobsUrl)}</dd>
+        </div>
+        <div>
+          <dt className="font-semibold text-slate-800 dark:text-zinc-100">Contains LinkedIn profile URL</dt>
+          <dd className="mt-1 text-slate-600 dark:text-zinc-300">{String(jobDebug.containsLinkedInProfileUrl)}</dd>
+        </div>
+        <DebugList label="Resume signals" values={debug.resume.detectedResumeSignals} />
+        <DebugList label="Job description signals" values={jobDebug.detectedResumeSignals} />
+        <DebugList label="Job signals" values={jobDebug.detectedJobSignals} />
+      </dl>
+    </details>
+  );
+}
+
 export function ResultsPanel({
   result,
   inputError,
@@ -184,6 +246,7 @@ export function ResultsPanel({
   isAnalyzing = false,
   resultVersion = 0,
   scoreContextActions,
+  validationDebug,
 }: ResultsPanelProps) {
   if (isAnalyzing) {
     return <LoadingIndicator />;
@@ -195,6 +258,7 @@ export function ResultsPanel({
         <TriangleAlert className="mx-auto h-8 w-8 text-amber-700 dark:text-amber-300" />
         <h2 className="mt-4 text-xl font-semibold text-slate-950 dark:text-zinc-50">Possible Input Error</h2>
         <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-slate-700 dark:text-zinc-300">{inputError}</p>
+        {validationDebug ? <ValidationDebugPanel debug={validationDebug} /> : null}
       </section>
     );
   }

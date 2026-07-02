@@ -22,7 +22,10 @@ export type EmploymentType =
   | 'Part-Time Contract'
   | 'Full-Time Contract'
   | 'Contract-to-Hire'
-  | 'Internship';
+  | 'Internship'
+  | 'Volunteer'
+  | 'Unpaid'
+  | 'Volunteer (Unpaid)';
 
 export type StrongMatch = {
   label: string;

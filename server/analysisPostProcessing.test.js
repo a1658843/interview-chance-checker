@@ -19,6 +19,7 @@ import { isKnownLowRoiSource } from './knownLowRoiSources.js';
 const APPLY = 'Apply \u2705';
 const SKIP = 'Skip \u274c';
 const STRONG_APPLY = 'Strong Apply \u2705';
+const HARD_SKIP = 'Hard Skip \u274c\u274c';
 
 function splitReasoningSentences(text) {
   return String(text ?? '')
@@ -2198,6 +2199,391 @@ test('preferred-only frontend skills do not create deterministic critical gaps',
   assert.equal(result.criticalGaps.some((gap) => /sass|less|state management/i.test(gap)), false);
 });
 
+test('adpanel-like frontend role creates deterministic frontend years and Next.js gaps', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile AI coding tools frontend component projects.';
+  const jobDescriptionText = `
+    LinkedIn Job Posting
+    Title: Frontend Developer
+    Company: adpanel
+    Employment Type: Contract
+
+    Required Skills & Qualifications
+    2+ years' experience in frontend development.
+    Strong experience with React, HTML, CSS, JavaScript, Git, Agile, and AI coding tools.
+    Experience with Next.js.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 6.5,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'Git', 'AI coding tools', 'Agile', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The candidate has meaningful frontend overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.deepEqual(result.criticalGaps, [
+    '2+ years frontend development experience requirement not met',
+    'Next.js experience not demonstrated',
+  ]);
+  assert.ok(result.strongMatches.includes('React'));
+  assert.ok(result.strongMatches.includes('Git'));
+  assert.ok(result.strongMatches.includes('CSS'));
+});
+
+test('adpanel-like frontend gaps are added when raw model omits them', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile AI coding tools frontend component projects.';
+  const jobDescriptionText = `
+    Required Skills & Qualifications
+    2+ years' experience in frontend development.
+    Experience with React and Next.js.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 6.5,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend role has meaningful overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.deepEqual(result.criticalGaps, [
+    '2+ years frontend development experience requirement not met',
+    'Next.js experience not demonstrated',
+  ]);
+});
+
+test('frontend gap wording variants collapse to adpanel canonical gaps', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile AI coding tools frontend component projects.';
+  const jobDescriptionText = `
+    Required Skills & Qualifications
+    2+ years' experience in frontend development.
+    Experience with React and Next.js.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 6.5,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [
+          'No Next.js experience',
+          'Next.js experience missing',
+          '2 years frontend experience missing',
+          'Frontend experience requirement not met',
+        ],
+        shortReasoning: 'The frontend role has meaningful overlap with a few gaps.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.deepEqual(result.criticalGaps, [
+    '2+ years frontend development experience requirement not met',
+    'Next.js experience not demonstrated',
+  ]);
+});
+
+test('preferred-only Next.js mention does not create deterministic Next.js gap', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile frontend component projects.';
+  const jobDescriptionText = `
+    Requirements
+    React, JavaScript, HTML, CSS, and Git.
+    Preferred
+    Experience with Next.js.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend role has meaningful overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.includes('Next.js experience not demonstrated'), false);
+});
+
+test('React requirement alone does not create Next.js gap', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile frontend component projects.';
+  const jobDescriptionText = `
+    Requirements
+    Experience with React, JavaScript, HTML, CSS, and Git.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend role has meaningful overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.includes('Next.js experience not demonstrated'), false);
+});
+
+test('resume Next.js evidence suppresses deterministic Next.js gap', () => {
+  const resumeText = 'React Next.js JavaScript HTML CSS Git Agile frontend component projects.';
+  const jobDescriptionText = `
+    Requirements
+    Experience with React and Next.js.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The frontend role has meaningful overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.includes('Next.js experience not demonstrated'), false);
+});
+
+test('backend years requirement does not create frontend years gap', () => {
+  const resumeText = 'React JavaScript HTML CSS Git Agile frontend component projects.';
+  const jobDescriptionText = `
+    Requirements
+    2+ years of backend development experience.
+    Experience with React.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 7,
+        recommendation: APPLY,
+        interviewChance: '3-7%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'Medium',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The role has some frontend overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.criticalGaps.includes('2+ years frontend development experience requirement not met'), false);
+});
+
+function analyzeAdpanelScoreVariant(fitScore) {
+  const resumeText = 'React JavaScript HTML CSS Git Agile AI coding tools frontend component projects.';
+  const jobDescriptionText = `
+    LinkedIn Job Posting
+    Title: Frontend Developer
+    Company: adpanel
+    Location: United States
+    Employment Type: Contract
+    Workplace Type: Remote
+    Source: LinkedIn
+    URL: https://www.linkedin.com/jobs/view/1234567890/
+
+    Job Description:
+    About the job
+    adpanel is hiring a Frontend Developer to build advertising technology dashboards for its product team.
+
+    Responsibilities
+    Build reusable UI components with React, JavaScript, HTML, and CSS.
+    Collaborate with designers and engineers using Git, Agile workflows, and AI coding tools.
+
+    Required Skills & Qualifications
+    2+ years' experience in frontend development.
+    Experience with React, HTML, CSS, JavaScript, Git, Agile, AI coding tools, and Next.js.
+  `;
+  const guarded = applyAnalysisGuardrails(
+    {
+      fitScore,
+      recommendation: STRONG_APPLY,
+      interviewChance: '5-10%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'Medium',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'Git', 'AI coding tools', 'CSS', 'HTML'],
+      criticalGaps: [],
+      shortReasoning: 'The candidate has meaningful frontend overlap.',
+    },
+    { resumeText, jobDescriptionText },
+  );
+
+  return applyFinalConsistencyRepair(guarded, {
+    resumeText,
+    jobDescriptionText,
+    optimizeForApplicationRoi: false,
+  });
+}
+
+test('adpanel-like years plus core framework gaps stabilize raw 7.5 score to 6.5', () => {
+  const result = analyzeAdpanelScoreVariant(7.5);
+
+  assert.equal(result.fitScore, 6.5);
+  assert.equal(result.recommendation, APPLY);
+  assert.equal(result.interviewChance, '3-7%');
+  assert.deepEqual(result.criticalGaps, [
+    '2+ years frontend development experience requirement not met',
+    'Next.js experience not demonstrated',
+  ]);
+});
+
+test('adpanel-like years plus core framework gaps stabilize raw 8.5 score to 6.5', () => {
+  const result = analyzeAdpanelScoreVariant(8.5);
+
+  assert.equal(result.fitScore, 6.5);
+  assert.equal(result.recommendation, APPLY);
+  assert.equal(result.interviewChance, '3-7%');
+});
+
+test('adpanel-like final evidence remains stable across high raw score range', () => {
+  const results = [7.5, 8.5, 8.8].map((fitScore) => analyzeAdpanelScoreVariant(fitScore));
+
+  for (const result of results) {
+    assert.equal(result.fitScore, 6.5);
+    assert.equal(result.recommendation, APPLY);
+    assert.equal(result.interviewChance, '3-7%');
+    assert.deepEqual(result.criticalGaps, results[0].criticalGaps);
+    assert.deepEqual(result.strongMatches, results[0].strongMatches);
+  }
+});
+
+test('supporting deterministic gaps can still use 8.0 stabilization', () => {
+  const resumeText = 'React TypeScript JavaScript REST APIs CSS HTML.';
+  const jobDescriptionText = `
+    Requirements
+    Experience with React, TypeScript, JavaScript, CSS, REST API integration, SASS or LESS, and state management libraries like Redux or Context.
+  `;
+  const result = applyFinalConsistencyRepair(
+    applyAnalysisGuardrails(
+      {
+        fitScore: 8.5,
+        recommendation: STRONG_APPLY,
+        interviewChance: '5-10%',
+        companyType: 'Direct Employer',
+        opportunityQuality: 'High',
+        applicationRequirements: [],
+        effortLevel: 'Low',
+        strongMatches: ['React', 'TypeScript', 'JavaScript', 'CSS'],
+        criticalGaps: [],
+        shortReasoning: 'The candidate has strong frontend overlap.',
+      },
+      { resumeText, jobDescriptionText },
+    ),
+    { resumeText, jobDescriptionText, optimizeForApplicationRoi: false },
+  );
+
+  assert.equal(result.fitScore, 8.0);
+  assert.deepEqual(result.criticalGaps, [
+    'SASS or LESS experience not demonstrated',
+    'State management libraries (Redux, Context API) experience not demonstrated',
+  ]);
+});
+
+test('explicit years gap without core framework gap is not forced to 6.5', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.5,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'Git', 'CSS'],
+      criticalGaps: ['2+ years frontend development experience requirement not met'],
+      shortReasoning: 'The candidate has frontend overlap but lacks the stated experience threshold.',
+    },
+    {
+      resumeText: 'React JavaScript CSS Git frontend projects.',
+      jobDescriptionText: 'Required Skills & Qualifications: 2+ years frontend development experience. React, CSS, and Git.',
+      optimizeForApplicationRoi: false,
+    },
+  );
+
+  assert.notEqual(result.fitScore, 6.5);
+});
+
+test('core framework gap without explicit years gap is not forced to 6.5', () => {
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8.5,
+      recommendation: APPLY,
+      interviewChance: '3-7%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      applicationRequirements: [],
+      effortLevel: 'Low',
+      strongMatches: ['React', 'Git', 'CSS'],
+      criticalGaps: ['Next.js experience not demonstrated'],
+      shortReasoning: 'The candidate has frontend overlap but lacks Next.js.',
+    },
+    {
+      resumeText: 'React JavaScript CSS Git frontend projects.',
+      jobDescriptionText: 'Requirements: React, CSS, Git, and Next.js.',
+      optimizeForApplicationRoi: false,
+    },
+  );
+
+  assert.notEqual(result.fitScore, 6.5);
+  assert.equal(result.fitScore, 8.0);
+});
+
 test('Atlassian-like distributed systems gap is deterministic when the model omits it', () => {
   const resumeText = 'Python React REST APIs Docker PostgreSQL academic projects and internship work.';
   const jobDescriptionText = `
@@ -2949,6 +3335,175 @@ test('known low-ROI source never softens technical Hard Skip', () => {
   assert.equal(roiOn.interviewChance, roiOff.interviewChance);
   assert.deepEqual(roiOn.strongMatches, roiOff.strongMatches);
   assert.deepEqual(roiOn.criticalGaps, roiOff.criticalGaps);
+});
+
+test('The City Tutors unpaid volunteer LinkedIn role is a hard application blocker', () => {
+  const jd = `
+LinkedIn Job Posting
+
+Title: UNPAID VOLUNTEER - Front End Engineer
+Company: The City Tutors
+Location: United States
+Workplace: Remote
+Employment Type: Volunteer
+Source: LinkedIn
+
+Job Description:
+This is a remote volunteer role supporting education technology projects.
+Responsibilities include building responsive user interfaces with React, JavaScript, HTML, and CSS.
+Qualifications include familiarity with Git and component-based development.
+`;
+  const analysis = {
+    fitScore: 5.5,
+    recommendation: SKIP,
+    interviewChance: '3-7%',
+    companyType: 'Direct Employer',
+    opportunityQuality: 'Medium',
+    employmentType: 'Unknown',
+    strongMatches: ['React', 'JavaScript'],
+    criticalGaps: [],
+    shortReasoning: 'The role appears above the demonstrated experience level.',
+  };
+
+  const result = applyFinalConsistencyRepair(analysis, {
+    resumeText: 'React JavaScript HTML CSS Git frontend projects',
+    jobDescriptionText: jd,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(result.recommendation, HARD_SKIP);
+  assert.equal(result.employmentType, 'Volunteer (Unpaid)');
+  assert.match(result.shortReasoning, /unpaid volunteer role/i);
+  assert.equal(result.fitScore, 5.5);
+});
+
+test('remote volunteer role wording triggers hard skip even without unpaid in title', () => {
+  const jd = `
+Title: Front End Engineer
+Company: Education Nonprofit
+
+Job Description:
+This is a remote volunteer role for a React developer supporting student mentoring software.
+`;
+
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8,
+      recommendation: STRONG_APPLY,
+      interviewChance: '15-25%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      strongMatches: ['React', 'JavaScript', 'REST APIs'],
+      criticalGaps: [],
+      shortReasoning: 'The candidate is a strong technical match.',
+    },
+    {
+      resumeText: 'React JavaScript REST APIs frontend development',
+      jobDescriptionText: jd,
+      optimizeForApplicationRoi: false,
+    },
+  );
+
+  assert.equal(result.recommendation, HARD_SKIP);
+  assert.equal(result.employmentType, 'Volunteer');
+  assert.match(result.shortReasoning, /unpaid volunteer role|paid full-time job search/i);
+});
+
+test('paid nonprofit role does not trigger unpaid volunteer blocker', () => {
+  const jd = `
+Title: Front End Engineer
+Company: Education Nonprofit
+
+Job Description:
+This nonprofit is hiring a paid full-time frontend engineer to build student support software.
+Responsibilities include React, JavaScript, and accessibility work.
+`;
+
+  const result = applyFinalConsistencyRepair(
+    {
+      fitScore: 8,
+      recommendation: STRONG_APPLY,
+      interviewChance: '15-25%',
+      companyType: 'Direct Employer',
+      opportunityQuality: 'High',
+      strongMatches: ['React', 'JavaScript'],
+      criticalGaps: [],
+      shortReasoning: 'The candidate is a strong technical match.',
+    },
+    {
+      resumeText: 'React JavaScript accessibility frontend development',
+      jobDescriptionText: jd,
+      optimizeForApplicationRoi: true,
+    },
+  );
+
+  assert.notEqual(result.recommendation, HARD_SKIP);
+});
+
+test('paid internship does not trigger unpaid blocker but unpaid internship does', () => {
+  const baseAnalysis = {
+    fitScore: 7,
+    recommendation: APPLY,
+    interviewChance: '8-15%',
+    companyType: 'Direct Employer',
+    opportunityQuality: 'Medium',
+    strongMatches: ['React', 'JavaScript'],
+    criticalGaps: [],
+    shortReasoning: 'The candidate has relevant frontend experience.',
+  };
+  const resumeText = 'React JavaScript frontend internship projects';
+  const paidInternship = applyFinalConsistencyRepair(baseAnalysis, {
+    resumeText,
+    jobDescriptionText: 'This is a paid internship position for frontend engineering work.',
+    optimizeForApplicationRoi: true,
+  });
+  const unpaidInternship = applyFinalConsistencyRepair(baseAnalysis, {
+    resumeText,
+    jobDescriptionText: 'This is an unpaid internship for frontend engineering work.',
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.notEqual(paidInternship.recommendation, HARD_SKIP);
+  assert.equal(unpaidInternship.recommendation, HARD_SKIP);
+  assert.equal(unpaidInternship.employmentType, 'Unpaid');
+});
+
+test('ROI on and off do not soften unpaid volunteer hard skip', () => {
+  const jd = `
+Title: UNPAID VOLUNTEER - Front End Engineer
+Company: The City Tutors
+Employment Type: Volunteer
+
+Job Description:
+This volunteer position is unpaid and supports a nonprofit education platform.
+`;
+  const analysis = {
+    fitScore: 8,
+    recommendation: STRONG_APPLY,
+    interviewChance: '15-25%',
+    companyType: 'Talent Network',
+    opportunityQuality: 'Low',
+    postingSource: 'Hire Feed',
+    strongMatches: ['React', 'JavaScript'],
+    criticalGaps: [],
+    shortReasoning: 'The candidate is a strong technical match.',
+  };
+
+  const roiOff = applyFinalConsistencyRepair(analysis, {
+    resumeText: 'React JavaScript frontend development',
+    jobDescriptionText: jd,
+    optimizeForApplicationRoi: false,
+  });
+  const roiOn = applyFinalConsistencyRepair(analysis, {
+    resumeText: 'React JavaScript frontend development',
+    jobDescriptionText: jd,
+    optimizeForApplicationRoi: true,
+  });
+
+  assert.equal(roiOff.recommendation, HARD_SKIP);
+  assert.equal(roiOn.recommendation, HARD_SKIP);
+  assert.equal(roiOn.roiRecommendation, HARD_SKIP);
+  assert.match(roiOn.shortReasoning, /unpaid volunteer role/i);
 });
 
 const atlassianScoreResumeText =
